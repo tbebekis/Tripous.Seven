@@ -1,0 +1,37 @@
+/*
+ * Tripous.Seven
+ * Copyright (c) 2026 Theodoros Bebekis
+ *
+ * SPDX-License-Identifier: MIT
+ * See LICENSE for details.
+ */
+
+namespace Tripous.Data;
+
+/// <summary>
+/// Provides shared instances of available SQL providers.
+/// </summary>
+static public class SqlProviders
+{
+    // ● private fields
+    static readonly Lazy<SqlProviderSqlite> fSqlite = new(() => new SqlProviderSqlite());
+
+    // ● static public
+    /// <summary>
+    /// Returns the provider for a supported database server type.
+    /// </summary>
+    static public SqlProvider GetSqlProvider(DbServerType ServerType)
+    {
+        return ServerType switch
+        {
+            DbServerType.Sqlite => Sqlite,
+            _ => throw new NotSupportedException($"No SQL provider is available for {ServerType}.")
+        };
+    }
+
+    // ● properties
+    /// <summary>
+    /// Gets the shared SQLite provider.
+    /// </summary>
+    static public SqlProviderSqlite Sqlite => fSqlite.Value;
+}

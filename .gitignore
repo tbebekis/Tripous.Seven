@@ -1,0 +1,49 @@
+## [ Build Outputs ]
+**/bin/
+**/obj/
+**/Bin/
+**/Obj/
+*.exe
+*.dll
+*.pdb
+*.nupkg
+
+## [ Packages ]
+**/packages/
+**/node_modules/
+project.lock.json
+project.assets.json
+
+## [ Avalonia specific ]
+*.visualstate
+
+## [ OS specific ]
+.DS_Store
+Thumbs.db
+
+## [ IDE ]
+.vs/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+*.vshost.exe
+*.vshost.exe.manifest
+*.lscache
+riderModule.iml
+/_ReSharper.Caches/
+
+## [ Documentation build output ]
+DocFx/_site/ 
+
+## [ Playwright ]
+package.json
+package-lock.json
+node_modules
+ 
+## [ Miscs ]
+Agents.md
+CurrentWork.md
+ProjectGoal.md
+**/construction-order.md
+

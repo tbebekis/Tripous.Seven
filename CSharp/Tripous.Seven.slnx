@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Tripous.Tests/Tripous.Tests.csproj" />
+  <Project Path="Tripous/Tripous.csproj" />
+</Solution>
