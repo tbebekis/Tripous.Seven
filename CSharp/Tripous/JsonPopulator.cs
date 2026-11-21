@@ -13,98 +13,128 @@ namespace Tripous;
 /// </summary>
 static internal class JsonPopulator
 {
+    // ● private types
+    /// <summary>
+    /// Holds a prepared property update until all values have been read.
+    /// </summary>
+    sealed class PropertyUpdate
+    {
+        // ● properties
+        /// <summary>
+        /// Gets or sets the serializer metadata for the property.
+        /// </summary>
+        public JsonPropertyInfo Property { get; set; }
+        /// <summary>
+        /// Gets or sets the value to assign or copy into the existing collection.
+        /// </summary>
+        public object Value { get; set; }
+        /// <summary>
+        /// Gets or sets the existing read-only collection when one is reused.
+        /// </summary>
+        public object Target { get; set; }
+    }
+
     // ● private
     static object DefaultValue(Type Type) => Type.IsValueType ? Activator.CreateInstance(Type) : null;
-    static bool IsIgnored(PropertyInfo Property)
-    {
-        JsonIgnoreAttribute Attribute = Property.GetCustomAttribute<JsonIgnoreAttribute>();
-        return Attribute != null && Attribute.Condition == JsonIgnoreCondition.Always;
-    }
-    static void ResetProperty(object Instance, PropertyInfo Property)
-    {
-        if (Property.SetMethod != null && Property.SetMethod.IsPublic)
-        {
-            Property.SetValue(Instance, DefaultValue(Property.PropertyType));
-        }
-        else if (Property.GetMethod != null && Property.GetMethod.IsPublic)
-        {
-            object Value = Property.GetValue(Instance);
-            if (Value is Array Array)
-                System.Array.Clear(Array);
-            else if (Value is IDictionary Dictionary)
-                Dictionary.Clear();
-            else if (Value is IList List && !List.IsReadOnly && !List.IsFixedSize)
-                List.Clear();
-        }
-    }
-    static object ReadValue(JsonElement Element, PropertyInfo Property, JsonSerializerOptions Options)
+    static object ReadValue(JsonElement Element, JsonPropertyInfo Property, JsonSerializerOptions Options)
     {
         JsonSerializerOptions LocalOptions = new(Options);
-        JsonNumberHandlingAttribute NumberHandling = Property.GetCustomAttribute<JsonNumberHandlingAttribute>();
-        if (NumberHandling != null)
-            LocalOptions.NumberHandling = NumberHandling.Handling;
-        JsonConverterAttribute Converter = Property.GetCustomAttribute<JsonConverterAttribute>();
-        if (Converter != null)
-        {
-            JsonConverter Instance = Converter.CreateConverter(Property.PropertyType);
-            if (Instance == null && Converter.ConverterType != null)
-                Instance = (JsonConverter)Activator.CreateInstance(Converter.ConverterType);
-            if (Instance != null)
-                LocalOptions.Converters.Insert(0, Instance);
-        }
+        if (Property.NumberHandling.HasValue)
+            LocalOptions.NumberHandling = Property.NumberHandling.Value;
+        if (Property.CustomConverter != null)
+            LocalOptions.Converters.Insert(0, Property.CustomConverter);
         return JsonSerializer.Deserialize(Element.GetRawText(), Property.PropertyType, LocalOptions);
     }
-    static void PopulateReadOnlyCollection(object Target, JsonElement Element, PropertyInfo Property, JsonSerializerOptions Options)
+    static bool IsMutableCollection(object Target)
     {
-        if (Target is IList List && !List.IsReadOnly && !List.IsFixedSize)
+        if (Target is Array)
+            return true;
+        if (Target is IDictionary Dictionary)
+            return !Dictionary.IsReadOnly && !Dictionary.IsFixedSize;
+        if (Target is IList List)
+            return !List.IsReadOnly && !List.IsFixedSize;
+        return false;
+    }
+    static void ApplyCollection(object Target, object Value)
+    {
+        if (Target is Array TargetArray)
         {
-            if (ReadValue(Element, Property, Options) is IEnumerable Items)
-            {
-                foreach (object Item in Items)
-                    List.Add(Item);
-            }
+            Array.Clear(TargetArray);
+            if (Value is Array SourceArray)
+                Array.Copy(SourceArray, TargetArray, SourceArray.Length);
         }
         else if (Target is IDictionary Dictionary)
         {
-            if (ReadValue(Element, Property, Options) is IDictionary Items)
+            Dictionary.Clear();
+            if (Value is IDictionary Items)
             {
                 foreach (DictionaryEntry Item in Items)
                     Dictionary.Add(Item.Key, Item.Value);
+            }
+        }
+        else if (Target is IList List)
+        {
+            List.Clear();
+            if (Value is IEnumerable Items)
+            {
+                foreach (object Item in Items)
+                    List.Add(Item);
             }
         }
     }
 
     // ● internal
     /// <summary>
-    /// Resets eligible properties and fills those present in the JSON object.
+    /// Prepares property values before applying them to the existing object.
+    /// A property setter or collection operation may still fail during application.
     /// </summary>
     static internal void PopulateObject(object Instance, JsonElement Element, JsonSerializerOptions Options)
     {
         if (Element.ValueKind != JsonValueKind.Object)
             throw new JsonException("Expected a JSON object.");
-        StringComparer Comparer = Options.PropertyNameCaseInsensitive ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+        JsonSerializerOptions MetadataOptions = new(Options);
+        MetadataOptions.TypeInfoResolver ??= new DefaultJsonTypeInfoResolver();
+        MetadataOptions.MakeReadOnly();
+        JsonTypeInfo TypeInfo = MetadataOptions.GetTypeInfo(Instance.GetType());
+        if (TypeInfo.Kind != JsonTypeInfoKind.Object)
+            throw new NotSupportedException("PopulateObject requires object metadata for the root type.");
+
+        StringComparer Comparer = MetadataOptions.PropertyNameCaseInsensitive ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
         Dictionary<string, JsonElement> Values = new(Comparer);
         foreach (JsonProperty Item in Element.EnumerateObject())
             Values[Item.Name] = Item.Value;
 
-        PropertyInfo[] Properties = Instance.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public);
-        foreach (PropertyInfo Property in Properties)
+        List<PropertyUpdate> Updates = new();
+        foreach (JsonPropertyInfo Property in TypeInfo.Properties)
         {
-            if (Property.GetIndexParameters().Length == 0 && !IsIgnored(Property))
-                ResetProperty(Instance, Property);
+            if (Property.Set == null && Property.Get == null)
+                continue;
+            bool Found = Values.TryGetValue(Property.Name, out JsonElement JsonValue);
+            if (Property.Set != null)
+            {
+                object Value = Found ? ReadValue(JsonValue, Property, MetadataOptions) : DefaultValue(Property.PropertyType);
+                Updates.Add(new PropertyUpdate { Property = Property, Value = Value });
+            }
+            else
+            {
+                object Target = Property.Get(Instance);
+                if (!IsMutableCollection(Target))
+                    continue;
+                object Value = Found && JsonValue.ValueKind != JsonValueKind.Null
+                    ? ReadValue(JsonValue, Property, MetadataOptions) : null;
+                if (Target is Array TargetArray && Value is Array SourceArray && SourceArray.Length > TargetArray.Length)
+                    throw new JsonException($"JSON array is too long for read-only property '{Property.Name}'.");
+                Updates.Add(new PropertyUpdate { Property = Property, Target = Target, Value = Value });
+            }
         }
-        foreach (PropertyInfo Property in Properties)
+
+        foreach (PropertyUpdate Update in Updates)
         {
-            if (Property.GetIndexParameters().Length != 0 || IsIgnored(Property))
-                continue;
-            string Name = Property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
-                ?? Options.PropertyNamingPolicy?.ConvertName(Property.Name) ?? Property.Name;
-            if (!Values.TryGetValue(Name, out JsonElement Value))
-                continue;
-            if (Property.SetMethod != null && Property.SetMethod.IsPublic)
-                Property.SetValue(Instance, ReadValue(Value, Property, Options));
-            else if (Property.GetMethod != null && Property.GetMethod.IsPublic && Value.ValueKind != JsonValueKind.Null)
-                PopulateReadOnlyCollection(Property.GetValue(Instance), Value, Property, Options);
+            if (Update.Property.Set != null)
+                Update.Property.Set(Instance, Update.Value);
+            else
+                ApplyCollection(Update.Target, Update.Value);
         }
     }
 }

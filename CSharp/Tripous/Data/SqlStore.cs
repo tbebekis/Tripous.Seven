@@ -394,4 +394,38 @@ public class SqlStore
     /// Executes a SQL statement and returns the affected row count.
     /// </summary>
     public int ExecSql(string SqlText, int CommandTimeout, DataRow Params) => ExecSql(SqlText, CommandTimeout, CreateParams(Params));
+
+    // ● id generation
+    /// <summary>
+    /// Returns the next ID from the generator associated with a table.
+    /// </summary>
+    public int NextId(DbTransaction Transaction, string TableName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
+        return NextIdByGenerator(Transaction, "G_" + TableName);
+    }
+    /// <summary>
+    /// Returns the next ID from a named generator in the supplied transaction.
+    /// </summary>
+    public int NextIdByGenerator(DbTransaction Transaction, string GeneratorName)
+    {
+        ArgumentNullException.ThrowIfNull(Transaction);
+        ArgumentException.ThrowIfNullOrWhiteSpace(GeneratorName);
+        DataTable Table = Select(Transaction, fProvider.NextIdByGeneratorSql(GeneratorName));
+        if (Table.Rows.Count == 0 || Table.Rows[0].IsNull(0))
+            throw new InvalidOperationException("The generator did not return an ID.");
+        return Convert.ToInt32(Table.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
+    }
+    /// <summary>
+    /// Returns the last generated ID from the connection of the supplied transaction.
+    /// </summary>
+    public int LastId(DbTransaction Transaction, string TableName)
+    {
+        ArgumentNullException.ThrowIfNull(Transaction);
+        ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
+        DataTable Table = Select(Transaction, fProvider.LastIdSql(TableName));
+        if (Table.Rows.Count == 0 || Table.Rows[0].IsNull(0))
+            throw new InvalidOperationException("The provider did not return a generated ID.");
+        return Convert.ToInt32(Table.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
+    }
 }

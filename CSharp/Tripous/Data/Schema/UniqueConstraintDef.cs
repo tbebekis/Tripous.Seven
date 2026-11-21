@@ -17,15 +17,19 @@ public class UniqueConstraintDef
     /// <summary>
     /// Returns the SQL definition of the constraint.
     /// </summary>
-    public string GetDefText()
+    public string GetDefText() => GetDefText(Name);
+    /// <summary>
+    /// Returns the SQL definition using the specified constraint name.
+    /// </summary>
+    public string GetDefText(string ConstraintName)
     {
-        DataTableDef.ValidateIdentifier(Name);
+        DataTableDef.ValidateIdentifier(ConstraintName);
         string[] Names = FieldNames.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         if (Names.Length == 0)
             throw new InvalidOperationException("A unique constraint must specify at least one field.");
         foreach (string Field in Names)
             DataTableDef.ValidateIdentifier(Field);
-        return $"CONSTRAINT {Name} UNIQUE ({string.Join(", ", Names)})";
+        return $"CONSTRAINT {ConstraintName} UNIQUE ({string.Join(", ", Names)})";
     }
 
     // ● properties

@@ -115,4 +115,29 @@ public class SqlProviderTests
                 Directory.Delete(Folder, true);
         }
     }
+    /// <summary>
+    /// Type tokens are replaced only as whole tokens outside quoted text and comments.
+    /// </summary>
+    [Fact]
+    public void ReplacesOnlyUnquotedWholeTypeTokens()
+    {
+        string Sql = "SELECT '@DATE', \"@BOOL\", `@BLOB`, [@NULL], @DATE_TIME, @DATE, @DATE_EXTRA, @DATE$VALUE, @@DATE -- @DATE\n/* @BOOL @DECIMAL_(9, 2) */ @DECIMAL_ (10, 2), :Value";
+        string Result = SqlProviders.Sqlite.ReplaceDataTypePlaceholders(Sql);
+        Assert.Contains("'@DATE', \"@BOOL\", `@BLOB`, [@NULL]", Result);
+        Assert.Contains("datetime, datetime, @DATE_EXTRA, @DATE$VALUE, @@DATE", Result);
+        Assert.Contains("-- @DATE\n/* @BOOL @DECIMAL_(9, 2) */ decimal(10, 2), :Value", Result);
+    }
+    /// <summary>
+    /// Token replacement keeps protected text intact during command preparation.
+    /// </summary>
+    [Fact]
+    public void PreparesParametersAfterReplacingTypes()
+    {
+        using (var Command = new SqliteCommand())
+        {
+            SqlProviders.Sqlite.PrepareCommand(Command, "SELECT '@DATE', :Value -- @BOOL\n", new SqlParams().Add("Value", 5));
+            Assert.Equal("SELECT '@DATE', :Value -- @BOOL\n", Command.CommandText);
+            Assert.Single(Command.Parameters);
+        }
+    }
 }

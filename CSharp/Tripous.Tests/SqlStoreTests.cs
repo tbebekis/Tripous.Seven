@@ -125,4 +125,32 @@ public class SqlStoreTests
                 File.Delete(PathName);
         }
     }
+    /// <summary>
+    /// LastId reads the generated SQLite row ID on the same transaction connection.
+    /// </summary>
+    [Fact]
+    public void LastIdUsesTransactionConnection()
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-id-{Guid.NewGuid():N}.db");
+        try
+        {
+            SqlStore Store = new(new DbConnectionInfo { ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            Store.ExecSql("CREATE TABLE Items (Id INTEGER PRIMARY KEY, Name TEXT)");
+            using (SqlTransactionContext Context = Store.BeginTransactionContext())
+            {
+                Store.ExecSql(Context.Transaction, "INSERT INTO Items (Name) VALUES (:Name)", new SqlParams().Add("Name", "first"));
+                Assert.Equal(1, Store.LastId(Context.Transaction, "Items"));
+                Store.ExecSql(Context.Transaction, "INSERT INTO Items (Name) VALUES (:Name)", new SqlParams().Add("Name", "second"));
+                Assert.Equal(2, Store.LastId(Context.Transaction, "Items"));
+                Assert.Throws<NotSupportedException>(() => Store.NextId(Context.Transaction, "Items"));
+                Context.Rollback();
+            }
+            Assert.Equal(0L, Store.Select("SELECT COUNT(*) AS Total FROM Items").Rows[0]["Total"]);
+        }
+        finally
+        {
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
 }

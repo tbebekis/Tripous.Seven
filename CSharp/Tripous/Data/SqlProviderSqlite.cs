@@ -51,6 +51,11 @@ public class SqlProviderSqlite : SqlProvider
         }
     }
 
+    /// <summary>
+    /// Returns SQL for the last row ID inserted on the current SQLite connection.
+    /// </summary>
+    public override string LastIdSql(string TableName) => "SELECT last_insert_rowid()";
+
     // ● protected
     /// <summary>
     /// Gets SQLite mappings for the shared SQL type placeholders.

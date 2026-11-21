@@ -15,6 +15,10 @@ static public class DbConfig
 {
     // ● properties
     /// <summary>
+    /// Gets or sets the default type of a primary key when no type is specified.
+    /// </summary>
+    static public DataFieldType DefaultPrimaryKeyType { get; set; } = DataFieldType.String;
+    /// <summary>
     /// Gets or sets the name used to find the default database connection.
     /// </summary>
     static public string DefaultConnectionName { get; set; } = "DEFAULT";
@@ -38,4 +42,33 @@ static public class DbConfig
     /// Gets or sets the binary value field name of the system settings table.
     /// </summary>
     static public string SysDbIniBlobField { get; set; } = "EntryData";
+
+    /// <summary>
+    /// Gets or sets the maximum length of automatically generated ASCII identifiers.
+    /// </summary>
+    static public int GeneratedIdentifierMaxLength { get; set; } = 63;
+    /// <summary>
+    /// Gets or sets the target identifier limit in bytes for PostgreSQL.
+    /// The standard server limit is 63 bytes and may vary by server build.
+    /// </summary>
+    static public int PostgreSqlIdentifierMaxBytes { get; set; } = 63;
+    /// <summary>
+    /// Gets or sets the target identifier limit in characters for MySQL tables,
+    /// columns, indexes and constraints.
+    /// </summary>
+    static public int MySqlIdentifierMaxCharacters { get; set; } = 64;
+    /// <summary>
+    /// Gets or sets the target identifier limit in bytes for most Oracle schema objects.
+    /// This assumes COMPATIBLE is set to 12.2 or later.
+    /// </summary>
+    static public int OracleIdentifierMaxBytes { get; set; } = 128;
+    /// <summary>
+    /// Gets or sets the target identifier limit in characters for Firebird 4 or later.
+    /// The server can also impose a separate byte limit or a lower configured limit.
+    /// </summary>
+    static public int FirebirdIdentifierMaxCharacters { get; set; } = 63;
+    /// <summary>
+    /// Gets or sets the target identifier limit in characters for SQL Server schema objects.
+    /// </summary>
+    static public int MsSqlIdentifierMaxCharacters { get; set; } = 128;
 }

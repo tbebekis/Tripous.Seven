@@ -40,17 +40,75 @@ public abstract class SqlProvider
         throw new NotSupportedException("This provider does not support database creation.");
     }
     /// <summary>
+    /// Returns SQL for obtaining the next value of a named generator.
+    /// </summary>
+    public virtual string NextIdByGeneratorSql(string GeneratorName)
+    {
+        throw new NotSupportedException("This provider does not support generators.");
+    }
+    /// <summary>
+    /// Returns SQL for obtaining the last generated ID in the current connection.
+    /// </summary>
+    public virtual string LastIdSql(string TableName)
+    {
+        throw new NotSupportedException("This provider does not support retrieving generated IDs.");
+    }
+    /// <summary>
     /// Replaces Tripous SQL type placeholders with provider-specific SQL.
     /// </summary>
     public virtual string ReplaceDataTypePlaceholders(string SqlText)
     {
         ArgumentNullException.ThrowIfNull(SqlText);
-        string Result = System.Text.RegularExpressions.Regex.Replace(SqlText,
-            @"@DECIMAL_\s*\(([^)]*)\)", Match => DecimalWithArgsSql(Match.Groups[1].Value),
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        Dictionary<string, string> Tokens = new(StringComparer.Ordinal);
         foreach (var Item in TypeTokens)
-            Result = Result.Replace(Item.Key, Item.Value, StringComparison.Ordinal);
-        return Result;
+            Tokens.Add(Item.Key, Item.Value);
+
+        StringBuilder Result = new();
+        int Position = 0;
+        int Index = 0;
+        while (Index < SqlText.Length)
+        {
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index))
+                continue;
+            if (SqlText[Index] != '@' || (Index > 0 && (char.IsLetterOrDigit(SqlText[Index - 1]) || SqlText[Index - 1] == '_' || SqlText[Index - 1] == '$' || SqlText[Index - 1] == '@')))
+            {
+                Index++;
+                continue;
+            }
+            int End = Index + 1;
+            while (End < SqlText.Length && (char.IsLetterOrDigit(SqlText[End]) || SqlText[End] == '_' || SqlText[End] == '$'))
+                End++;
+            string Token = SqlText.Substring(Index, End - Index);
+            string Replacement = null;
+            if (Token.Equals(SqlTypeTokens.CDECIMAL_, StringComparison.OrdinalIgnoreCase))
+            {
+                int Open = End;
+                while (Open < SqlText.Length && char.IsWhiteSpace(SqlText[Open]))
+                    Open++;
+                if (Open < SqlText.Length && SqlText[Open] == '(')
+                {
+                    int Close = SqlText.IndexOf(')', Open + 1);
+                    if (Close >= 0)
+                    {
+                        Replacement = DecimalWithArgsSql(SqlText.Substring(Open + 1, Close - Open - 1));
+                        End = Close + 1;
+                    }
+                }
+            }
+            else
+            {
+                Tokens.TryGetValue(Token, out Replacement);
+            }
+            if (Replacement != null)
+            {
+                Result.Append(SqlText, Position, Index - Position);
+                Result.Append(Replacement);
+                Position = End;
+            }
+            Index = End;
+        }
+        Result.Append(SqlText, Position, SqlText.Length - Position);
+        return Result.ToString();
     }
     /// <summary>
     /// Prepares SQL text and parameters for the driver.

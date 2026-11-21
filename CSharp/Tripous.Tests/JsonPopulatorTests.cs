@@ -56,6 +56,44 @@ public class JsonPopulatorTests
         public string Value { get; set; } = "Old child";
     }
 
+    /// <summary>
+    /// Provides properties with JSON names and property-level converters.
+    /// </summary>
+    public class CustomizedSample
+    {
+        /// <summary>
+        /// Gets or sets a renamed property.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("display_name")]
+        public string Name { get; set; } = "Old";
+        /// <summary>
+        /// Gets or sets a number using a property-level converter.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonConverter(typeof(NumberConverter))]
+        public int Number { get; set; } = 5;
+        /// <summary>
+        /// Gets or sets a property that may be excluded by options.
+        /// </summary>
+        public string Secret { get; set; } = "Keep";
+    }
+    /// <summary>
+    /// Reads a number encoded as text with a prefix.
+    /// </summary>
+    public class NumberConverter : System.Text.Json.Serialization.JsonConverter<int>
+    {
+        // ● public
+        /// <summary>
+        /// Reads the prefixed number.
+        /// </summary>
+        public override int Read(ref System.Text.Json.Utf8JsonReader Reader, Type TypeToConvert, System.Text.Json.JsonSerializerOptions Options)
+            => int.Parse(Reader.GetString().Substring(1));
+        /// <summary>
+        /// Writes the prefixed number.
+        /// </summary>
+        public override void Write(System.Text.Json.Utf8JsonWriter Writer, int Value, System.Text.Json.JsonSerializerOptions Options)
+            => Writer.WriteStringValue("N" + Value);
+    }
+
     // ● public
     /// <summary>
     /// Population keeps the root and resets properties absent from JSON.
@@ -100,5 +138,32 @@ public class JsonPopulatorTests
     {
         Assert.Throws<System.Text.Json.JsonException>(() => Json.PopulateObject(new Sample(), "[1,2]"));
         Assert.ThrowsAny<System.Text.Json.JsonException>(() => Json.PopulateObject(new Sample(), "{"));
+    }
+    /// <summary>
+    /// Invalid values do not modify any existing property or read-only collection.
+    /// </summary>
+    [Fact]
+    public void InvalidValueDoesNotModifyInstance()
+    {
+        Sample Instance = new();
+        Child Original = Instance.Nested;
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => Json.PopulateObject(Instance, "{\"Name\":\"New\",\"Timeout\":\"invalid\",\"ReadOnlyValues\":[1]}"));
+        Assert.Equal("Old", Instance.Name);
+        Assert.Equal(30, Instance.Timeout);
+        Assert.Same(Original, Instance.Nested);
+        Assert.Equal(new[] { 9 }, Instance.ReadOnlyValues);
+    }
+    /// <summary>
+    /// Serializer metadata controls property names, exclusion and property converters.
+    /// </summary>
+    [Fact]
+    public void UsesSerializerMetadata()
+    {
+        CustomizedSample Instance = new();
+        var Options = Json.CreateJsonOptions(CamelCase: true, ExcludeProperties: new[] { "secret" });
+        Json.PopulateObject(Instance, "{\"display_name\":\"New\",\"number\":\"N42\",\"secret\":\"Changed\"}", Options);
+        Assert.Equal("New", Instance.Name);
+        Assert.Equal(42, Instance.Number);
+        Assert.Equal("Keep", Instance.Secret);
     }
 }

@@ -13,13 +13,29 @@ namespace Tripous.Data;
 /// </summary>
 public class DataFieldDef
 {
+    // ● private fields
+    DataFieldType? fDataType;
+
     // ● public
+    /// <summary>
+    /// Validates the field before generating its SQL definition.
+    /// </summary>
+    public void Check()
+    {
+        DataTableDef.ValidateIdentifier(Name);
+        if (DataType == DataFieldType.None)
+            throw new InvalidOperationException($"Field '{Name}' must have a data type.");
+        if (DataType == DataFieldType.String && Length < 1)
+            throw new InvalidOperationException($"String field '{Name}' must have a positive length.");
+        if (IsPrimaryKey && DataType != DataFieldType.String && DataType != DataFieldType.Integer)
+            throw new InvalidOperationException($"Primary key '{Name}' must use a string or integer field.");
+    }
     /// <summary>
     /// Returns the portable SQL definition for the field.
     /// </summary>
     public string GetDefText(bool IncludeName = true)
     {
-        DataTableDef.ValidateIdentifier(Name);
+        Check();
         string TypeText = DataType switch
         {
             DataFieldType.String when Length > 0 => $"{SqlTypeTokens.CNVARCHAR}({Length})",
@@ -34,12 +50,55 @@ public class DataFieldDef
             DataFieldType.TextBlob => SqlTypeTokens.CNBLOB_TEXT,
             _ => throw new InvalidOperationException($"Invalid field type or length for {Name}.")
         };
-        if (IsPrimaryKey && DataType != DataFieldType.String && DataType != DataFieldType.Integer)
-            throw new InvalidOperationException("Primary keys must use a string or integer field.");
         string Default = string.IsNullOrWhiteSpace(DefaultExpression) ? "" : $" DEFAULT {DefaultExpression}";
         string Nullability = Required || IsPrimaryKey ? $" {SqlTypeTokens.CNOT_NULL}" : $" {SqlTypeTokens.CNULL}";
         string PrimaryKey = IsPrimaryKey ? " PRIMARY KEY" : "";
         return $"{(IncludeName ? Name + " " : "")}{TypeText}{Default}{Nullability}{PrimaryKey}";
+    }
+
+    /// <summary>
+    /// Sets the foreign key reference and optional constraint name.
+    /// </summary>
+    public DataFieldDef SetForeignKey(string Value, string ConstraintName = "")
+    {
+        ForeignKey = Value;
+        if (!string.IsNullOrWhiteSpace(ConstraintName))
+            ForeignKeyConstraintName = ConstraintName;
+        return this;
+    }
+    /// <summary>
+    /// Sets whether the field is unique and optionally names the constraint.
+    /// </summary>
+    public DataFieldDef SetUnique(bool Value = true, string ConstraintName = "")
+    {
+        Unique = Value;
+        if (!string.IsNullOrWhiteSpace(ConstraintName))
+            UniqueConstraintName = ConstraintName;
+        return this;
+    }
+    /// <summary>
+    /// Sets whether the field is required.
+    /// </summary>
+    public DataFieldDef SetRequired(bool Value = true)
+    {
+        Required = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets the SQL default expression.
+    /// </summary>
+    public DataFieldDef SetDefaultExpression(string Value = null)
+    {
+        DefaultExpression = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets the maximum length of a string field.
+    /// </summary>
+    public DataFieldDef SetLength(int Value)
+    {
+        Length = Value;
+        return this;
     }
 
     // ● properties
@@ -48,9 +107,13 @@ public class DataFieldDef
     /// </summary>
     public string Name { get; set; } = "";
     /// <summary>
-    /// Gets or sets the field type.
+    /// Gets or sets the field type. An unspecified primary key uses the configured default.
     /// </summary>
-    public DataFieldType DataType { get; set; }
+    public DataFieldType DataType
+    {
+        get => fDataType ?? (IsPrimaryKey ? DbConfig.DefaultPrimaryKeyType : DataFieldType.None);
+        set => fDataType = value;
+    }
     /// <summary>
     /// Gets or sets the maximum string length.
     /// </summary>

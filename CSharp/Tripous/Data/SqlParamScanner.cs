@@ -25,38 +25,9 @@ static public class SqlParamScanner
         int Index = 0;
         while (Index < SqlText.Length)
         {
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index))
+                continue;
             char Ch = SqlText[Index];
-            if (Ch == '\'' || Ch == '"' || Ch == '`' || Ch == '[')
-            {
-                char End = Ch == '[' ? ']' : Ch;
-                Index++;
-                while (Index < SqlText.Length)
-                {
-                    if (SqlText[Index++] == End)
-                    {
-                        if (Index < SqlText.Length && SqlText[Index] == End)
-                            Index++;
-                        else
-                            break;
-                    }
-                }
-                continue;
-            }
-            if (Ch == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-')
-            {
-                Index += 2;
-                while (Index < SqlText.Length && SqlText[Index] != '\n' && SqlText[Index] != '\r')
-                    Index++;
-                continue;
-            }
-            if (Ch == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*')
-            {
-                Index += 2;
-                while (Index + 1 < SqlText.Length && !(SqlText[Index] == '*' && SqlText[Index + 1] == '/'))
-                    Index++;
-                Index = Math.Min(Index + 2, SqlText.Length);
-                continue;
-            }
             if (Ch == Prefix)
             {
                 if (Index + 1 < SqlText.Length && SqlText[Index + 1] == Prefix)
