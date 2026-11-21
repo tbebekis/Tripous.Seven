@@ -53,7 +53,14 @@ public class SchemaTests
             SchemaVersion Version = Schema.FindOrAdd(1);
             Version.Tables.Add(new SchemaItem { Name = "Customer", SqlText = "CREATE TABLE Customer (Id @NVARCHAR(40) @NOT_NULL PRIMARY KEY)" });
             Version.StatementsAfter.Add("INVALID SQL");
-            Assert.Throws<SqliteException>(() => Schema.Execute());
+            SqliteException Error = Assert.Throws<SqliteException>(() => Schema.Execute());
+            Assert.Equal("Application", Error.Data["Schema.Domain"]);
+            Assert.Equal(Name, Error.Data["Schema.Connection"]);
+            Assert.Equal(1, Error.Data["Schema.Version"]);
+            Assert.Equal("Subsequent structural statements", Error.Data["Schema.Phase"]);
+            Assert.Equal("Statement after", Error.Data["Schema.Operation"]);
+            Assert.Equal("INVALID SQL", Error.Data["Schema.SqlText"]);
+            Assert.NotNull(Error.Data["Schema.Recovery"]);
             DbIni Ini = new(Info);
             string Entry = $"Database.Version.{Name}.Application";
             Assert.Equal(-1, Ini.ReadInteger(Entry, -1));

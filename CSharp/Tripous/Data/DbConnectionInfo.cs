@@ -13,6 +13,15 @@ namespace Tripous.Data;
 /// </summary>
 public class DbConnectionInfo
 {
+    // ● constructor
+    /// <summary>
+    /// Creates connection settings and the associated database schema.
+    /// </summary>
+    public DbConnectionInfo()
+    {
+        Schema = new DbSchema(this);
+    }
+
     // ● properties
     /// <summary>
     /// Gets or sets the optional name of the connection.
@@ -30,4 +39,10 @@ public class DbConnectionInfo
     /// Gets or sets the default command timeout in seconds.
     /// </summary>
     public int CommandTimeoutSeconds { get; set; } = 30;
+    /// <summary>
+    /// Gets the metadata associated with this connection.
+    /// Unload and reload it when connection settings change.
+    /// </summary>
+    [JsonIgnore]
+    public DbSchema Schema { get; }
 }

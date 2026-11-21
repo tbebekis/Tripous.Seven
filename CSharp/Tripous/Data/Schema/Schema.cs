@@ -51,7 +51,7 @@ public class Schema
         {
             if (Version.Version > CurrentVersion)
             {
-                SchemaExecutor.Execute(Version, ConnectionInfo,
+                SchemaExecutor.Execute(Version, ConnectionInfo, Domain,
                     Transaction => Ini.WriteInteger(Transaction, Entry, Version.Version));
                 CurrentVersion = Version.Version;
             }

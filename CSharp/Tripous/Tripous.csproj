@@ -10,4 +10,8 @@
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Data/Metadata/Resources/Sql/**/*.sql" />
+  </ItemGroup>
+
 </Project>
