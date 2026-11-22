@@ -22,21 +22,36 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
     {
         RefreshFromMaster();
     }
-    void CheckDetail(MemTable Detail)
+    void CheckSubtree()
+    {
+        foreach (MemTable Detail in this)
+        {
+            Detail.CheckRelation(fMaster);
+            Detail.Details.CheckSubtree();
+        }
+    }
+    // ● internal
+    /// <summary>
+    /// Checks whether a detail can be added without changing either table.
+    /// </summary>
+    internal void CheckCanAdd(MemTable Detail)
     {
         ArgumentNullException.ThrowIfNull(Detail);
-        if (fMaster.DataSet == null || !ReferenceEquals(fMaster.DataSet, Detail.DataSet))
-            throw new InvalidOperationException("Master and detail tables must belong to the same DataSet.");
-        if (Detail.Master != null || Contains(Detail))
+        if (Detail.Master != null || base.Contains(Detail))
             throw new InvalidOperationException("The detail table already has a master.");
+        if (Find(Detail.TableName) != null)
+            throw new ArgumentException($"A detail table named '{Detail.TableName}' already exists under '{fMaster.TableName}'.", nameof(Detail));
         for (MemTable Table = fMaster; Table != null; Table = Table.Master)
         {
             if (ReferenceEquals(Table, Detail))
                 throw new InvalidOperationException("A master-detail relationship cannot contain a cycle.");
         }
+        if (Active)
+        {
+            Detail.CheckRelation(fMaster);
+            Detail.Details.CheckSubtree();
+        }
     }
-
-    // ● internal
     /// <summary>
     /// Refreshes active detail filters from the current master row.
     /// </summary>
@@ -55,13 +70,11 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
     /// </summary>
     protected override void InsertItem(int Index, MemTable Detail)
     {
-        CheckDetail(Detail);
-        if (Active)
-            Detail.CheckRelation(fMaster);
+        CheckCanAdd(Detail);
         base.InsertItem(Index, Detail);
-        Detail.SetMaster(fMaster);
         for (int Count = 0; Count < fMaster.EventsDisableCount; Count++)
             Detail.EventsDisabled = true;
+        Detail.SetMaster(fMaster);
         if (Active)
         {
             Detail.Details.Active = true;
@@ -108,6 +121,30 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
         fMaster.CurrentRowChanged += Master_CurrentRowChanged;
     }
 
+    // ● public
+    /// <summary>
+    /// Returns whether the specified table is a direct detail.
+    /// </summary>
+    public new bool Contains(MemTable Detail) => base.Contains(Detail);
+    /// <summary>
+    /// Returns whether a direct detail with the specified name exists.
+    /// </summary>
+    public bool Contains(string TableName) => Find(TableName) != null;
+    /// <summary>
+    /// Finds a direct detail by name, ignoring case, or returns null.
+    /// </summary>
+    public MemTable Find(string TableName)
+    {
+        return this.FirstOrDefault(Detail => string.Equals(Detail.TableName, TableName, StringComparison.OrdinalIgnoreCase));
+    }
+    /// <summary>
+    /// Gets a direct detail by name, or throws if it is not found.
+    /// </summary>
+    public MemTable Get(string TableName)
+    {
+        return Find(TableName) ?? throw new KeyNotFoundException($"Table '{TableName}' was not found in '{fMaster.TableName}' details.");
+    }
+
     // ● properties
     /// <summary>
     /// Activates or deactivates the relationships using a nested counter.
@@ -121,8 +158,7 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
             {
                 if (fActiveCount == 0)
                 {
-                    foreach (MemTable Detail in this)
-                        Detail.CheckRelation(fMaster);
+                    CheckSubtree();
                     fActiveCount++;
                     foreach (MemTable Detail in this)
                     {
