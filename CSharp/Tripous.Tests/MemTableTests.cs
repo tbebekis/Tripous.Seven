@@ -770,6 +770,104 @@ public class MemTableTests
         Assert.Equal("SubDetail original", SubDetail.Rows[0]["Value"]);
     }
     /// <summary>
+    /// Rejecting a newly added current row must not leave a detached row selected.
+    /// The change of current row must also notify listeners.
+    /// </summary>
+    [Fact]
+    public void RejectingAddedCurrentRowNotifiesAndDoesNotRetainDetachedRow()
+    {
+        MemTable Table = CreateTable();
+        DataRow Existing = Table.Rows.Add(1);
+        Table.AcceptChanges();
+        DataRow Added = Table.Rows.Add(2);
+        Assert.Same(Added, Table.CurrentRow);
+        int Count = 0;
+        Table.CurrentRowChanged += (Sender, Args) => Count++;
+
+        Table.RejectChangesAll();
+
+        Assert.Equal(DataRowState.Detached, Added.RowState);
+        Assert.True(Table.CurrentRow == null || ReferenceEquals(Existing, Table.CurrentRow));
+        Assert.Equal(1, Count);
+    }
+    /// <summary>
+    /// Rejecting the only new row clears the current row and notifies listeners.
+    /// </summary>
+    [Fact]
+    public void RejectingOnlyAddedRowClearsCurrentRowAndNotifies()
+    {
+        MemTable Table = CreateTable();
+        DataRow Added = Table.Rows.Add(1);
+        Assert.Same(Added, Table.CurrentRow);
+        int Count = 0;
+        Table.CurrentRowChanged += (Sender, Args) => Count++;
+
+        Table.RejectChangesAll();
+
+        Assert.Equal(DataRowState.Detached, Added.RowState);
+        Assert.Null(Table.CurrentRow);
+        Assert.Equal(1, Count);
+    }
+    /// <summary>
+    /// Rejecting a new master selects the remaining master and refreshes its details.
+    /// </summary>
+    [Fact]
+    public void RejectingAddedMasterRefreshesDetails()
+    {
+        var (Master, Detail, MasterRow, First, _) = CreateRelatedTables();
+        DataRow Added = Master.Rows.Add(2);
+        Assert.Same(Added, Master.CurrentRow);
+
+        Master.RejectChangesAll();
+
+        Assert.Same(MasterRow, Master.CurrentRow);
+        Assert.Same(First, Detail.CurrentRow);
+        Assert.Equal(DataRowState.Detached, Added.RowState);
+    }
+    /// <summary>
+    /// A rejected detail row falls back to a visible row of the current master.
+    /// </summary>
+    [Fact]
+    public void RejectingAddedDetailSelectsVisibleDetail()
+    {
+        var (_, Detail, _, First, _) = CreateRelatedTables();
+        DataRow Added = Detail.Rows.Add(33, 1);
+        Assert.Same(Added, Detail.CurrentRow);
+        int Count = 0;
+        Detail.CurrentRowChanged += (Sender, Args) => Count++;
+
+        Added.RejectChanges();
+
+        Assert.Equal(DataRowState.Detached, Added.RowState);
+        Assert.Same(First, Detail.CurrentRow);
+        Assert.Equal(1, Count);
+    }
+    /// <summary>
+    /// A current row change during nested event suspension is reported once
+    /// when the outermost suspension ends.
+    /// </summary>
+    [Fact]
+    public void RejectingAddedCurrentRowWhileEventsDisabledNotifiesOnResume()
+    {
+        MemTable Table = CreateTable();
+        DataRow Existing = Table.Rows.Add(1);
+        Table.AcceptChanges();
+        DataRow Added = Table.Rows.Add(2);
+        int Count = 0;
+        Table.CurrentRowChanged += (Sender, Args) => Count++;
+        Table.EventsDisabled = true;
+        Table.EventsDisabled = true;
+
+        Added.RejectChanges();
+
+        Assert.Same(Existing, Table.CurrentRow);
+        Assert.Equal(0, Count);
+        Table.EventsDisabled = false;
+        Assert.Equal(0, Count);
+        Table.EventsDisabled = false;
+        Assert.Equal(1, Count);
+    }
+    /// <summary>
     /// Accept and reject operations visit sub-details before their masters.
     /// </summary>
     [Theory]
@@ -1728,15 +1826,15 @@ public class MemTableTests
         Master.AddDetail(Other);
         Other.TableName = "dEtAiL";
         string Errors = Master.GetTopTableErrors();
-        Assert.Contains("more than one detail", Errors);
+        Assert.Contains("more than one table", Errors);
         Assert.Contains("dEtAiL", Errors);
         Assert.Throws<InvalidOperationException>(() => Master.CheckTopTableErrors());
     }
     /// <summary>
-    /// The sibling-name rule does not reject the same name under different masters.
+    /// Separate table trees can each contain a table with the same name.
     /// </summary>
     [Fact]
-    public void DetailNamesAreUniquePerMaster()
+    public void SeparateTreesCanUseTheSameTableName()
     {
         MemTable First = new("First");
         MemTable Second = new("Second");
@@ -1973,6 +2071,134 @@ public class MemTableTests
             if (File.Exists(FilePath))
                 File.Delete(FilePath);
         }
+    }
+
+    /// <summary>
+    /// Copying a tree copies each table's SQL without replacing the target holder.
+    /// </summary>
+    [Fact]
+    public void CopyFromCopiesSqlForEveryTableIndependently()
+    {
+        var (Source, SourceDetail, SourceSubDetail) = CreateChangeTree();
+        Source.Sqls.InsertRowSql = "insert master";
+        SourceDetail.Sqls.UpdateRowSql = "update detail";
+        SourceSubDetail.Sqls.DeleteRowSql = "delete sub-detail";
+        Source.Sqls.DisplayLabels["Id"] = "MasterId";
+        SourceDetail.Sqls.DisplayLabels["Id"] = "DetailId";
+        SourceSubDetail.Sqls.DisplayLabels["Id"] = "SubDetailId";
+        MemTable Target = new("Target");
+        TableSqls OriginalSqls = Target.Sqls;
+        Target.Sqls.InsertRowSql = "insert old table";
+        Target.Sqls.DisplayLabels["Old"] = "Old";
+        Target.CopyFrom(Source);
+        MemTable Detail = Assert.Single(Target.Details);
+        MemTable SubDetail = Assert.Single(Detail.Details);
+        Assert.Same(OriginalSqls, Target.Sqls);
+        Assert.Equal("insert master", Target.Sqls.InsertRowSql);
+        Assert.Equal("update detail", Detail.Sqls.UpdateRowSql);
+        Assert.Equal("delete sub-detail", SubDetail.Sqls.DeleteRowSql);
+        Assert.False(Target.Sqls.DisplayLabels.ContainsKey("Old"));
+        Assert.Equal("MasterId", Target.Sqls.DisplayLabels["Id"]);
+        Assert.Equal("DetailId", Detail.Sqls.DisplayLabels["Id"]);
+        Assert.Equal("SubDetailId", SubDetail.Sqls.DisplayLabels["Id"]);
+        Assert.NotSame(Source.Sqls.DisplayLabels, Target.Sqls.DisplayLabels);
+        Assert.NotSame(SourceDetail.Sqls.DisplayLabels, Detail.Sqls.DisplayLabels);
+        Detail.Sqls.DisplayLabels["Id"] = "Changed";
+        Assert.Equal("DetailId", SourceDetail.Sqls.DisplayLabels["Id"]);
+    }
+
+    /// <summary>
+    /// Records how current rows are restored after rejecting a tree deletion.
+    /// </summary>
+    [Fact]
+    public void RejectDeletedTreeRequiresExplicitCurrentRowUpdate()
+    {
+        var (Master, Detail, SubDetail) = CreateChangeTree();
+        Master.DetailsActive = true;
+        DataRow MasterRow = Master.CurrentRow;
+        DataRow DetailRow = Detail.CurrentRow;
+        DataRow SubDetailRow = SubDetail.CurrentRow;
+        Master.DeleteAll(false);
+        Assert.Null(Master.CurrentRow);
+        Master.RejectChangesAll();
+        Assert.Equal(DataRowState.Unchanged, MasterRow.RowState);
+        Assert.Equal(DataRowState.Unchanged, DetailRow.RowState);
+        Assert.Equal(DataRowState.Unchanged, SubDetailRow.RowState);
+        Assert.Null(Master.CurrentRow);
+        Assert.Null(Detail.CurrentRow);
+        Assert.Null(SubDetail.CurrentRow);
+        Master.UpdateCurrentRow();
+        Assert.Same(MasterRow, Master.CurrentRow);
+        Assert.Same(DetailRow, Detail.CurrentRow);
+        Assert.Same(SubDetailRow, SubDetail.CurrentRow);
+    }
+
+    /// <summary>
+    /// A detail cannot have the same name as its master, ignoring case.
+    /// </summary>
+    [Fact]
+    public void DetailNameCannotMatchMasterName()
+    {
+        MemTable Master = new("Orders");
+        MemTable Detail = new("orders");
+        Assert.Throws<ArgumentException>(() => Master.AddDetail(Detail));
+        Assert.Empty(Master.Details);
+        Assert.Null(Detail.Master);
+    }
+    /// <summary>
+    /// Attaching a subtree checks names against all existing branches.
+    /// </summary>
+    [Fact]
+    public void AttachingSubtreeRejectsNameFromAnotherBranch()
+    {
+        MemTable Root = new("Root");
+        MemTable First = new("First");
+        MemTable Second = new("Second");
+        First.AddDetail(new MemTable("Items"));
+        Second.AddDetail(new MemTable("ITEMS"));
+        Root.AddDetail(First);
+        Assert.Throws<ArgumentException>(() => Root.AddDetail(Second));
+        Assert.Null(Second.Master);
+        Assert.Same(First, Assert.Single(Root.Details));
+        Assert.Same(Second, Assert.Single(Second.Details).Master);
+    }
+    /// <summary>
+    /// Validation detects duplicate names introduced in different tree branches.
+    /// </summary>
+    [Fact]
+    public void TreeValidationDetectsRenamedTableInAnotherBranch()
+    {
+        var (Root, First, FirstChild) = CreateChangeTree();
+        MemTable Second = new("Second") { DetailFields = new[] { "MasterId" } };
+        Second.Columns.Add("Id", typeof(int));
+        Second.Columns.Add("MasterId", typeof(int));
+        MemTable SecondChild = new("SecondChild") { DetailFields = new[] { "MasterId" } };
+        SecondChild.Columns.Add("Id", typeof(int));
+        SecondChild.Columns.Add("MasterId", typeof(int));
+        Root.AddDetail(Second);
+        Second.AddDetail(SecondChild);
+        SecondChild.TableName = "sUbDeTaIl";
+        string Errors = Root.GetTopTableErrors();
+        Assert.Contains("more than one table", Errors);
+        Assert.Contains("sUbDeTaIl", Errors);
+        Assert.Throws<InvalidOperationException>(() => Root.CheckTopTableErrors());
+    }
+    /// <summary>
+    /// A renamed duplicate within an incoming subtree is rejected before attachment.
+    /// </summary>
+    [Fact]
+    public void AttachingSubtreeRejectsItsInternalDuplicateNames()
+    {
+        MemTable Root = new("Root");
+        MemTable Branch = new("Branch");
+        MemTable First = new("First");
+        MemTable Second = new("Second");
+        Branch.AddDetail(First);
+        Branch.AddDetail(Second);
+        Second.TableName = "FIRST";
+        Assert.Throws<ArgumentException>(() => Root.AddDetail(Branch));
+        Assert.Empty(Root.Details);
+        Assert.Null(Branch.Master);
     }
 
 }

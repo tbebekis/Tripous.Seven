@@ -59,6 +59,12 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
         if (!IsVisible)
             CurrentRow = DataView.Count > 0 ? DataView[0].Row : null;
     }
+    void SelectFirstValidRow()
+    {
+        CurrentRow = IsDetail
+            ? DataView.Cast<DataRowView>().Select(Item => Item.Row).FirstOrDefault(IsValidRow)
+            : Rows.Cast<DataRow>().FirstOrDefault(IsValidRow);
+    }
     void DataView_ListChanged(object Sender, System.ComponentModel.ListChangedEventArgs Args)
     {
         if (fApplyingRowFilters || Master == null || !Master.Details.Active)
@@ -254,6 +260,9 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
             if (Args.Action == DataRowAction.Add && Args.Row.RowState != DataRowState.Deleted)
                 NewRowAdded?.Invoke(this, new DataTableNewRowEventArgs(Args.Row));
         }
+        // Rolling back a newly added row detaches it without a RowDeleted event.
+        if (Args.Action == DataRowAction.Rollback && ReferenceEquals(Args.Row, fCurrentRow) && !IsValidRow(fCurrentRow))
+            SelectFirstValidRow();
         if (Args.Action == DataRowAction.Change || Args.Action == DataRowAction.Rollback)
             RefreshDetailsForCurrentRowChange(Args.Row);
     }
@@ -265,9 +274,7 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
         if (!EventsDisabled)
             base.OnRowDeleted(Args);
         if (!IsValidRow(fCurrentRow))
-            CurrentRow = IsDetail
-                ? DataView.Cast<DataRowView>().Select(Item => Item.Row).FirstOrDefault(IsValidRow)
-                : Rows.Cast<DataRow>().FirstOrDefault(IsValidRow);
+            SelectFirstValidRow();
     }
     /// <summary>
     /// Clears the current row when the table is cleared.
@@ -405,6 +412,7 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
                     MasterFields = Source.MasterFields?.ToArray();
                     fDetailFields = Source.fDetailFields?.ToArray();
                     AutoGenerateGuidKeys = Source.AutoGenerateGuidKeys;
+                    Sqls.AssignFrom(Source.Sqls);
                     CurrentRow = Rows.Cast<DataRow>().FirstOrDefault(IsValidRow);
                 }
                 finally
@@ -609,6 +617,7 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
     {
         StringBuilder Errors = new();
         HashSet<MemTable> Visited = new(ReferenceEqualityComparer.Instance);
+        HashSet<string> TableNames = new(StringComparer.OrdinalIgnoreCase);
 
         void CheckTable(MemTable Table)
         {
@@ -619,6 +628,8 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
             }
             if (string.IsNullOrWhiteSpace(Table.TableName))
                 Errors.AppendLine("A table has no name.");
+            else if (!TableNames.Add(Table.TableName))
+                Errors.AppendLine($"The table tree has more than one table named '{Table.TableName}'.");
             if (Table.KeyFields == null || Table.KeyFields.Length == 0)
                 Errors.AppendLine($"Table '{Table.TableName}' has no key fields.");
             else
@@ -659,13 +670,8 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
                     }
                 }
             }
-            HashSet<string> DetailNames = new(StringComparer.OrdinalIgnoreCase);
             foreach (MemTable Detail in Table.Details)
-            {
-                if (!DetailNames.Add(Detail.TableName))
-                    Errors.AppendLine($"Table '{Table.TableName}' has more than one detail named '{Detail.TableName}'.");
                 CheckTable(Detail);
-            }
         }
 
         CheckTable(this);
@@ -726,6 +732,7 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
     }
     /// <summary>
     /// Rejects changes in all details before rejecting this table's changes.
+    /// Call UpdateCurrentRow explicitly when selection needs to be refreshed.
     /// </summary>
     public void RejectChangesAll()
     {

@@ -13,6 +13,29 @@ namespace Tripous.Data;
 /// </summary>
 public class TableSqls
 {
+    // ● public
+    /// <summary>
+    /// Copies statements and display labels from another instance.
+    /// The display label dictionary is copied independently.
+    /// </summary>
+    public void AssignFrom(TableSqls Source)
+    {
+        ArgumentNullException.ThrowIfNull(Source);
+        if (ReferenceEquals(this, Source))
+            return;
+        Dictionary<string, string> Labels = Source.DisplayLabels == null
+            ? new Dictionary<string, string>()
+            : new Dictionary<string, string>(Source.DisplayLabels, Source.DisplayLabels.Comparer);
+        SelectSql = Source.SelectSql;
+        DeleteSql = Source.DeleteSql;
+        SelectByMasterIdSql = Source.SelectByMasterIdSql;
+        SelectRowSql = Source.SelectRowSql;
+        InsertRowSql = Source.InsertRowSql;
+        UpdateRowSql = Source.UpdateRowSql;
+        DeleteRowSql = Source.DeleteRowSql;
+        DisplayLabels = Labels;
+    }
+
     // ● properties
     /// <summary>
     /// Gets or sets the statement that selects table rows.

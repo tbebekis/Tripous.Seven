@@ -39,12 +39,24 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
         ArgumentNullException.ThrowIfNull(Detail);
         if (Detail.Master != null || base.Contains(Detail))
             throw new InvalidOperationException("The detail table already has a master.");
-        if (Find(Detail.TableName) != null)
-            throw new ArgumentException($"A detail table named '{Detail.TableName}' already exists under '{fMaster.TableName}'.", nameof(Detail));
+        MemTable Root = fMaster;
+        while (Root.Master != null)
+            Root = Root.Master;
         for (MemTable Table = fMaster; Table != null; Table = Table.Master)
         {
             if (ReferenceEquals(Table, Detail))
                 throw new InvalidOperationException("A master-detail relationship cannot contain a cycle.");
+        }
+        HashSet<string> Names = new(StringComparer.OrdinalIgnoreCase);
+        foreach (MemTable Table in Root.GetTreeAsFlatList())
+        {
+            if (!Names.Add(Table.TableName))
+                throw new InvalidOperationException($"The table tree already contains more than one table named '{Table.TableName}'.");
+        }
+        foreach (MemTable Table in Detail.GetTreeAsFlatList())
+        {
+            if (!Names.Add(Table.TableName))
+                throw new ArgumentException($"The table tree already contains a table named '{Table.TableName}'.", nameof(Detail));
         }
         if (Active)
         {
