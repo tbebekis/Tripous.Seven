@@ -56,6 +56,12 @@ public class SqlProviderSqlite : SqlProvider
     /// </summary>
     public override string LastIdSql(string TableName) => "SELECT last_insert_rowid()";
 
+    // ● capabilities
+    /// <summary>
+    /// SQLite generates integer identifiers during insertion.
+    /// </summary>
+    public override OidMode OidMode => OidMode.AutoInc;
+
     // ● protected
     /// <summary>
     /// Gets SQLite mappings for the shared SQL type placeholders.

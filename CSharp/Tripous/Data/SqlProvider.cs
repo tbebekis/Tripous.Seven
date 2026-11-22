@@ -193,6 +193,10 @@ public abstract class SqlProvider
     /// Gets whether the database supports auto-increment fields.
     /// </summary>
     public virtual bool SupportsAutoIncFields => true;
+    /// <summary>
+    /// Gets the provider's mode for generating integer row identifiers.
+    /// </summary>
+    public virtual OidMode OidMode => OidMode.None;
 
     // ● properties
     /// <summary>

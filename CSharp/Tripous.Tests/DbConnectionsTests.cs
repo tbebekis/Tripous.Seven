@@ -60,6 +60,30 @@ public class DbConnectionsTests
         }
     }
     /// <summary>
+    /// Rejects missing and duplicate names from JSON without changing existing connections.
+    /// </summary>
+    [Theory]
+    [InlineData("{\"List\":[{\"ConnectionString\":\"test\"}]}")]
+    [InlineData("{\"List\":[{\"Name\":\"Main\"},{\"Name\":\"main\"}]}")]
+    public void LoadRejectsInvalidConnectionNames(string Text)
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-connections-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(FilePath, Text);
+            DbConnections Connections = new();
+            DbConnectionInfo Existing = new() { Name = "Existing" };
+            Connections.Add(Existing);
+            Assert.Throws<InvalidOperationException>(() => Connections.Load(FilePath));
+            Assert.Same(Existing, Assert.Single(Connections.List));
+        }
+        finally
+        {
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+    /// <summary>
     /// Parameterless persistence uses the configured application folder.
     /// </summary>
     [Fact]

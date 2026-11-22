@@ -521,8 +521,8 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
     }
 
     /// <summary>
-    /// Configures a single Int32 key to generate temporary negative values.
-    /// Tables with composite or non-Int32 keys are left unchanged.
+    /// Configures a single Int32 or Int64 key to generate temporary negative values.
+    /// Tables with composite or other key types are left unchanged.
     /// </summary>
     public void InitializeAutoInc()
     {
@@ -531,7 +531,7 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
         DataColumn Column = Columns[KeyFields[0]];
         if (Column == null)
             throw new InvalidOperationException($"Table '{TableName}': key column '{KeyFields[0]}' was not found.");
-        if (Column.DataType == typeof(int))
+        if (Column.DataType == typeof(int) || Column.DataType == typeof(long))
         {
             Column.AutoIncrement = true;
             Column.AutoIncrementSeed = -1;

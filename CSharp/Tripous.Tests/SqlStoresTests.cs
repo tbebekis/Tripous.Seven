@@ -15,7 +15,7 @@ public class SqlStoresTests
 {
     // ● public
     /// <summary>
-    /// Each call creates a separate store with its own settings snapshot.
+    /// Each call creates a separate store and selects its provider at construction.
     /// </summary>
     [Fact]
     public void CreatesNewStoresWithCurrentSettings()

@@ -13,16 +13,6 @@ namespace Tripous.Data;
 /// </summary>
 public class DbSchema
 {
-    // ● constructor
-    /// <summary>
-    /// Creates a schema metadata container for a connection.
-    /// </summary>
-    public DbSchema(DbConnectionInfo ConnectionInfo)
-    {
-        ArgumentNullException.ThrowIfNull(ConnectionInfo);
-        this.ConnectionInfo = ConnectionInfo;
-    }
-
     // ● public
     /// <summary>
     /// Loads the metadata if it is not already loaded.
@@ -58,6 +48,16 @@ public class DbSchema
         Procedures.Clear();
         Sequences.Clear();
         IsLoaded = false;
+    }
+
+    // ● constructor
+    /// <summary>
+    /// Creates a schema metadata container for a connection.
+    /// </summary>
+    public DbSchema(DbConnectionInfo ConnectionInfo)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        this.ConnectionInfo = ConnectionInfo;
     }
 
     // ● properties

@@ -15,18 +15,16 @@ public class SqlStoreTests
 {
     // ● public
     /// <summary>
-    /// The store uses copied settings and supports named parameter inputs.
+    /// The store uses the supplied settings and supports named parameter inputs.
     /// </summary>
     [Fact]
-    public void SelectUsesCopiedSettingsAndParameters()
+    public void SelectUsesSuppliedSettingsAndParameters()
     {
         string PathName = Path.Combine(Path.GetTempPath(), $"tripous-{Guid.NewGuid():N}.db");
         try
         {
             var Info = new DbConnectionInfo { ConnectionString = $"Data Source={PathName};Pooling=False" };
             var Store = new SqlStore(Info);
-            Info.DbServerType = DbServerType.Oracle;
-            Info.ConnectionString = "invalid";
             DataTable Result = Store.Select("SELECT :Value AS Result", new Dictionary<string, object> { ["Value"] = 42 });
             Assert.Equal(42L, Result.Rows[0]["Result"]);
             Assert.Equal(DataRowState.Unchanged, Result.Rows[0].RowState);
@@ -37,6 +35,8 @@ public class SqlStoreTests
             Result = Store.Select("SELECT :Value AS Result", Source.Rows[0]);
             Assert.Equal(99L, Result.Rows[0]["Result"]);
             Assert.Equal(1L, Store.Select("SELECT 1 AS Result").Rows[0]["Result"]);
+            Info.ConnectionString = "Data Source=:memory:";
+            Assert.Equal("", Store.Select("PRAGMA database_list").Rows[0]["file"]);
         }
         finally
         {
@@ -139,9 +139,9 @@ public class SqlStoreTests
             using (SqlTransactionContext Context = Store.BeginTransactionContext())
             {
                 Store.ExecSql(Context.Transaction, "INSERT INTO Items (Name) VALUES (:Name)", new SqlParams().Add("Name", "first"));
-                Assert.Equal(1, Store.LastId(Context.Transaction, "Items"));
+                Assert.Equal(1L, Store.LastId(Context.Transaction, "Items"));
                 Store.ExecSql(Context.Transaction, "INSERT INTO Items (Name) VALUES (:Name)", new SqlParams().Add("Name", "second"));
-                Assert.Equal(2, Store.LastId(Context.Transaction, "Items"));
+                Assert.Equal(2L, Store.LastId(Context.Transaction, "Items"));
                 Assert.Throws<NotSupportedException>(() => Store.NextId(Context.Transaction, "Items"));
                 Context.Rollback();
             }

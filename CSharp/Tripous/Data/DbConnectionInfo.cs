@@ -10,21 +10,16 @@ namespace Tripous.Data;
 
 /// <summary>
 /// Describes a database connection and its default command timeout.
+/// After changing loaded settings, the programmer is responsible for updating
+/// dependent objects, including existing SQL stores and loaded schemas.
+/// In particular, create new stores when changing the database server type
+/// and unload or reload metadata when connection settings change.
 /// </summary>
 public class DbConnectionInfo
 {
-    // ● constructor
-    /// <summary>
-    /// Creates connection settings and the associated database schema.
-    /// </summary>
-    public DbConnectionInfo()
-    {
-        Schema = new DbSchema(this);
-    }
-
     // ● properties
     /// <summary>
-    /// Gets or sets the optional name of the connection.
+    /// Gets or sets the connection name, which must be supplied after deserialization.
     /// </summary>
     public string Name { get; set; } = "";
     /// <summary>
@@ -40,9 +35,9 @@ public class DbConnectionInfo
     /// </summary>
     public int CommandTimeoutSeconds { get; set; } = 30;
     /// <summary>
-    /// Gets the metadata associated with this connection.
+    /// Gets the shared metadata schema registered under this connection's name.
     /// Unload and reload it when connection settings change.
     /// </summary>
     [JsonIgnore]
-    public DbSchema Schema { get; }
+    public DbSchema Schema => DbSchemas.GetOrAdd(this);
 }

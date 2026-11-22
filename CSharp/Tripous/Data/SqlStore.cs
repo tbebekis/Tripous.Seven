@@ -9,7 +9,7 @@
 namespace Tripous.Data;
 
 /// <summary>
-/// Executes SQL statements using a copy of a database connection's settings.
+/// Executes SQL statements using the supplied database connection settings.
 /// </summary>
 public class SqlStore
 {
@@ -35,6 +35,16 @@ public class SqlStore
         return Result;
     }
 
+    // ● internal
+    /// <summary>
+    /// Gets the shared metadata schema associated with the store's connection.
+    /// </summary>
+    internal DbSchema Schema => fConnectionInfo.Schema;
+    /// <summary>
+    /// Gets the identifier generation mode selected by the store's provider.
+    /// </summary>
+    internal OidMode OidMode => fProvider.OidMode;
+
     // ● private logging
     /// <summary>
     /// Logs a prepared SQL command.
@@ -53,18 +63,13 @@ public class SqlStore
 
     // ● constructor
     /// <summary>
-    /// Creates a store using a private copy of the connection settings.
+    /// Creates a store using the supplied connection settings instance.
+    /// The provider is selected when the store is created.
     /// </summary>
     public SqlStore(DbConnectionInfo ConnectionInfo)
     {
         ArgumentNullException.ThrowIfNull(ConnectionInfo);
-        fConnectionInfo = new DbConnectionInfo
-        {
-            Name = ConnectionInfo.Name,
-            DbServerType = ConnectionInfo.DbServerType,
-            ConnectionString = ConnectionInfo.ConnectionString,
-            CommandTimeoutSeconds = ConnectionInfo.CommandTimeoutSeconds
-        };
+        fConnectionInfo = ConnectionInfo;
         fProvider = SqlProviders.GetSqlProvider(fConnectionInfo.DbServerType);
     }
 
@@ -399,7 +404,7 @@ public class SqlStore
     /// <summary>
     /// Returns the next ID from the generator associated with a table.
     /// </summary>
-    public int NextId(DbTransaction Transaction, string TableName)
+    public long NextId(DbTransaction Transaction, string TableName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
         return NextIdByGenerator(Transaction, "G_" + TableName);
@@ -407,25 +412,25 @@ public class SqlStore
     /// <summary>
     /// Returns the next ID from a named generator in the supplied transaction.
     /// </summary>
-    public int NextIdByGenerator(DbTransaction Transaction, string GeneratorName)
+    public long NextIdByGenerator(DbTransaction Transaction, string GeneratorName)
     {
         ArgumentNullException.ThrowIfNull(Transaction);
         ArgumentException.ThrowIfNullOrWhiteSpace(GeneratorName);
         DataTable Table = Select(Transaction, fProvider.NextIdByGeneratorSql(GeneratorName));
         if (Table.Rows.Count == 0 || Table.Rows[0].IsNull(0))
             throw new InvalidOperationException("The generator did not return an ID.");
-        return Convert.ToInt32(Table.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
+        return Convert.ToInt64(Table.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
     }
     /// <summary>
     /// Returns the last generated ID from the connection of the supplied transaction.
     /// </summary>
-    public int LastId(DbTransaction Transaction, string TableName)
+    public long LastId(DbTransaction Transaction, string TableName)
     {
         ArgumentNullException.ThrowIfNull(Transaction);
         ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
         DataTable Table = Select(Transaction, fProvider.LastIdSql(TableName));
         if (Table.Rows.Count == 0 || Table.Rows[0].IsNull(0))
             throw new InvalidOperationException("The provider did not return a generated ID.");
-        return Convert.ToInt32(Table.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
+        return Convert.ToInt64(Table.Rows[0][0], System.Globalization.CultureInfo.InvariantCulture);
     }
 }

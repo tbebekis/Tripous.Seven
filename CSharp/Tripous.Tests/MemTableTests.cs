@@ -994,7 +994,7 @@ public class MemTableTests
         Assert.Equal(MasterRow["Id"], DetailRow["MasterId"]);
     }
     /// <summary>
-    /// Composite and non-Int32 keys are not configured as temporary integer keys.
+    /// Composite and non-Int32/Int64 keys are not configured as temporary integer keys.
     /// </summary>
     [Fact]
     public void InitializeAutoIncDoesNotChangeOtherKeyTypes()
@@ -1008,6 +1008,18 @@ public class MemTableTests
         Composite.Columns.Add("Second", typeof(int));
         Composite.InitializeAutoInc();
         Assert.False(First.AutoIncrement);
+    }
+    /// <summary>
+    /// Temporary Int64 keys also start at minus one and decrease.
+    /// </summary>
+    [Fact]
+    public void InitializeAutoIncGeneratesNegativeLongKeys()
+    {
+        MemTable Table = new("Item");
+        Table.Columns.Add("Id", typeof(long));
+        Table.InitializeAutoInc();
+        Assert.Equal(-1L, Table.AddNewRow()["Id"]);
+        Assert.Equal(-2L, Table.AddNewRow()["Id"]);
     }
     /// <summary>
     /// A declared single key must refer to an existing column.

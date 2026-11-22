@@ -38,6 +38,15 @@ public class SqlProviderTests
 
     // ● public
     /// <summary>
+    /// SQLite uses auto-increment while the base provider specifies no mode.
+    /// </summary>
+    [Fact]
+    public void ProvidersReportIntegerIdentifierMode()
+    {
+        Assert.Equal(OidMode.None, new PositionalProvider().OidMode);
+        Assert.Equal(OidMode.AutoInc, SqlProviders.Sqlite.OidMode);
+    }
+    /// <summary>
     /// Repeated named references share one native parameter.
     /// </summary>
     [Fact]

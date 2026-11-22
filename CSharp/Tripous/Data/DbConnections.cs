@@ -13,6 +13,19 @@ namespace Tripous.Data;
 /// </summary>
 public class DbConnections
 {
+    // ● private
+    void CheckNames()
+    {
+        HashSet<string> Names = new(StringComparer.OrdinalIgnoreCase);
+        foreach (DbConnectionInfo Item in List)
+        {
+            if (Item == null || string.IsNullOrWhiteSpace(Item.Name))
+                throw new InvalidOperationException("Every database connection must have a name.");
+            if (!Names.Add(Item.Name))
+                throw new InvalidOperationException($"Duplicate database connection name: {Item.Name}");
+        }
+    }
+
     // ● public
     /// <summary>
     /// Finds a connection by name, ignoring case, or returns null when absent.
@@ -65,9 +78,20 @@ public class DbConnections
     /// </summary>
     public void Save(string FilePath) => Json.SaveToFile(this, FilePath);
     /// <summary>
-    /// Loads the list from a JSON file if it exists.
+    /// Loads named, case-insensitively unique connections from a JSON file.
+    /// Keeps the existing list unchanged when validation fails.
     /// </summary>
-    public void Load(string FilePath) => Json.LoadFromFile(this, FilePath);
+    public void Load(string FilePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(FilePath);
+        if (!File.Exists(FilePath))
+            return;
+        DbConnections Loaded = new();
+        Json.LoadFromFile(Loaded, FilePath);
+        Loaded.CheckNames();
+        List.Clear();
+        List.AddRange(Loaded.List);
+    }
 
     // ● properties
     /// <summary>
