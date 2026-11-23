@@ -25,6 +25,53 @@ public class SqlProviderSqlite : SqlProvider
     public override DbConnection CreateConnection(string ConnectionString) => new SqliteConnection(ConnectionString);
 
     /// <summary>
+    /// Applies the framework's limit to a SQLite list SELECT.
+    /// List SELECTs must not contain their own top-level LIMIT clause.
+    /// </summary>
+    public override string ApplyRowLimit(string SqlText, int RowLimit)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(SqlText);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RowLimit);
+        int Index = 0;
+        int Depth = 0;
+        int LastCodeEnd = 0;
+        while (Index < SqlText.Length)
+        {
+            int Start = Index;
+            bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
+                || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index))
+            {
+                if (!Comment)
+                    LastCodeEnd = Index;
+                continue;
+            }
+            char Ch = SqlText[Index];
+            if (Ch == '(')
+                Depth++;
+            else if (Ch == ')')
+                Depth--;
+            if (char.IsLetter(Ch) || Ch == '_')
+            {
+                Index++;
+                while (Index < SqlText.Length && (char.IsLetterOrDigit(SqlText[Index]) || SqlText[Index] == '_' || SqlText[Index] == '$'))
+                    Index++;
+                bool Parameter = Start > 0 && (SqlText[Start - 1] == ':' || SqlText[Start - 1] == '@' || SqlText[Start - 1] == '$');
+                if (Depth == 0 && !Parameter && SqlText.AsSpan(Start, Index - Start).Equals("limit", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("List SELECTs must not specify a top-level LIMIT; Tripous applies the row limit.");
+                LastCodeEnd = Index;
+                continue;
+            }
+            Index++;
+            if (!char.IsWhiteSpace(Ch))
+                LastCodeEnd = Index;
+        }
+        if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
+            LastCodeEnd--;
+        return SqlText.Insert(LastCodeEnd, $" LIMIT {RowLimit}");
+    }
+
+    /// <summary>
     /// Creates an empty SQLite database file without changing an existing file.
     /// </summary>
     public override bool CreateDatabase(string ConnectionString)
@@ -72,6 +119,7 @@ public class SqlProviderSqlite : SqlProvider
         new(SqlTypeTokens.CAUTO_INC, "integer autoincrement"),
         new(SqlTypeTokens.CNVARCHAR, "nvarchar"),
         new(SqlTypeTokens.CVARCHAR, "varchar"),
+        new(SqlTypeTokens.CINT64, "integer"),
         new(SqlTypeTokens.CFLOAT, "real"),
         new(SqlTypeTokens.CDECIMAL, "real"),
         new(SqlTypeTokens.CDATE_TIME, "datetime"),

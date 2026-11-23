@@ -9,12 +9,15 @@
 namespace Tripous.Data;
 
 /// <summary>
-/// Indicates how a provider generates integer row identifiers.
+/// Indicates how integer primary keys are generated when they are used.
+/// A provider reports its capability; applications can still use GUID-like
+/// string keys regardless of that capability.
 /// </summary>
 public enum OidMode
 {
     /// <summary>
-    /// No integer identifier generation mode is specified.
+    /// No integer identifier generation mode is specified. This may indicate
+    /// that GUID-like string keys are used, but does not determine the key type.
     /// </summary>
     None,
     /// <summary>

@@ -27,7 +27,7 @@ public class DataFieldDef
             throw new InvalidOperationException($"Field '{Name}' must have a data type.");
         if (DataType == DataFieldType.String && Length < 1)
             throw new InvalidOperationException($"String field '{Name}' must have a positive length.");
-        if (IsPrimaryKey && DataType != DataFieldType.String && DataType != DataFieldType.Integer)
+        if (IsPrimaryKey && DataType != DataFieldType.String && DataType != DataFieldType.Integer && DataType != DataFieldType.Int64)
             throw new InvalidOperationException($"Primary key '{Name}' must use a string or integer field.");
     }
     /// <summary>
@@ -40,6 +40,7 @@ public class DataFieldDef
         {
             DataFieldType.String when Length > 0 => $"{SqlTypeTokens.CNVARCHAR}({Length})",
             DataFieldType.Integer => "integer",
+            DataFieldType.Int64 => SqlTypeTokens.CINT64,
             DataFieldType.Double => SqlTypeTokens.CFLOAT,
             DataFieldType.Decimal => SqlTypeTokens.CDECIMAL,
             DataFieldType.Decimal_ => $"{SqlTypeTokens.CDECIMAL_}({DecimalPart})",

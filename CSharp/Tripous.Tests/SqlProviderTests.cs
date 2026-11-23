@@ -38,6 +38,20 @@ public class SqlProviderTests
 
     // ● public
     /// <summary>
+    /// SQLite applies the limit before a terminator and trailing comments.
+    /// </summary>
+    [Fact]
+    public void SqliteRowLimitHandlesCommentsAndStatementTerminator()
+    {
+        SqlProvider Provider = SqlProviders.Sqlite;
+        Assert.Equal("select Id from Customer LIMIT 5; -- list", Provider.ApplyRowLimit("select Id from Customer; -- list", 5));
+        Assert.Equal("select 'limit' as Value LIMIT 5 -- limit is a comment", Provider.ApplyRowLimit("select 'limit' as Value -- limit is a comment", 5));
+        Assert.Equal("select * from (select Id from Customer limit 10) X LIMIT 5", Provider.ApplyRowLimit("select * from (select Id from Customer limit 10) X", 5));
+        Assert.Equal("select :limit LIMIT 5", Provider.ApplyRowLimit("select :limit", 5));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("select Id from Customer LIMIT 10", 5));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Provider.ApplyRowLimit("select 1", 0));
+    }
+    /// <summary>
     /// SQLite uses auto-increment while the base provider specifies no mode.
     /// </summary>
     [Fact]

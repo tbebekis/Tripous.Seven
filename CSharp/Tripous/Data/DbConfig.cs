@@ -15,9 +15,17 @@ static public class DbConfig
 {
     // ● properties
     /// <summary>
+    /// Gets or sets the default maximum number of rows in a data module list.
+    /// </summary>
+    static public int DefaultRowLimit { get; set; } = 300;
+    /// <summary>
     /// Gets or sets the default type of a primary key when no type is specified.
     /// </summary>
     static public DataFieldType DefaultPrimaryKeyType { get; set; } = DataFieldType.String;
+    /// <summary>
+    /// Gets whether the default primary key type is a GUID-like string.
+    /// </summary>
+    static public bool GuidOids => DefaultPrimaryKeyType == DataFieldType.String;
     /// <summary>
     /// Gets or sets the name used to find the default database connection.
     /// </summary>

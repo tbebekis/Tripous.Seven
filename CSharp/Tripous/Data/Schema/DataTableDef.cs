@@ -130,6 +130,11 @@ public class DataTableDef
     public DataFieldDef AddInteger(string FieldName, bool Required = false, string DefaultExpression = null)
         => AddField(FieldName, DataFieldType.Integer, Required, DefaultExpression);
     /// <summary>
+    /// Adds a signed 64-bit integer field.
+    /// </summary>
+    public DataFieldDef AddInt64(string FieldName, bool Required = false, string DefaultExpression = null)
+        => AddField(FieldName, DataFieldType.Int64, Required, DefaultExpression);
+    /// <summary>
     /// Adds a floating-point field.
     /// </summary>
     public DataFieldDef AddFloat(string FieldName, bool Required = false, string DefaultExpression = null)

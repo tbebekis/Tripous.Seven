@@ -24,7 +24,7 @@ public enum DataFieldType
     /// </summary>
     String = 1,
     /// <summary>
-    /// Integer.
+    /// Signed 32-bit integer.
     /// </summary>
     Integer = 2,
     /// <summary>
@@ -59,4 +59,8 @@ public enum DataFieldType
     /// Large text.
     /// </summary>
     TextBlob = 512,
+    /// <summary>
+    /// Signed 64-bit integer.
+    /// </summary>
+    Int64 = 1024,
 }

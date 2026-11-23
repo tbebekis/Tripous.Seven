@@ -2084,6 +2084,53 @@ public class MemTableTests
                 File.Delete(FilePath);
         }
     }
+    /// <summary>
+    /// Loading details keeps the stored master IDs, with or without a current master.
+    /// Notifications remain disabled while the rows are loaded.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SqlStoreLoadsDetailsWithoutDependingOnCurrentMaster(bool HasCurrentMaster)
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-memtable-load-{Guid.NewGuid():N}.db");
+        try
+        {
+            SqlStore Store = new(new DbConnectionInfo { ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            Store.ExecSql("CREATE TABLE OrderLine (Id TEXT PRIMARY KEY, MasterId TEXT NOT NULL)");
+            Store.ExecSql("INSERT INTO OrderLine (Id, MasterId) VALUES ('D1', 'A'), ('D2', 'B')");
+            MemTable Master = new("OrderHeader");
+            Master.Columns.Add("Id", typeof(string));
+            DataRow First = Master.Rows.Add("A");
+            Master.Rows.Add("B");
+            MemTable Detail = new("OrderLine") { DetailFields = new[] { "MasterId" } };
+            Detail.Columns.Add("Id", typeof(string));
+            Detail.Columns.Add("MasterId", typeof(string));
+            Master.AddDetail(Detail);
+            Master.CurrentRow = HasCurrentMaster ? First : null;
+            int Notifications = 0;
+            Detail.CurrentRowChanged += (Sender, Args) => Notifications++;
+            Detail.RowChanged += (Sender, Args) => Notifications++;
+
+            Master.EventsDisabled = true;
+            try
+            {
+                Assert.Equal(2, Store.SelectTo(Detail, "SELECT Id, MasterId FROM OrderLine ORDER BY Id"));
+                Assert.Equal("A", Detail.Rows[0]["MasterId"]);
+                Assert.Equal("B", Detail.Rows[1]["MasterId"]);
+                Assert.Equal(0, Notifications);
+            }
+            finally
+            {
+                Master.EventsDisabled = false;
+            }
+        }
+        finally
+        {
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
 
     /// <summary>
     /// Copying a tree copies each table's SQL without replacing the target holder.

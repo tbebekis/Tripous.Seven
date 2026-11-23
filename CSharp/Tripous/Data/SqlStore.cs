@@ -44,6 +44,10 @@ public class SqlStore
     /// Gets the identifier generation mode selected by the store's provider.
     /// </summary>
     internal OidMode OidMode => fProvider.OidMode;
+    /// <summary>
+    /// Applies the provider-specific row limit to a list SELECT.
+    /// </summary>
+    internal string ApplyRowLimit(string SqlText, int RowLimit) => fProvider.ApplyRowLimit(SqlText, RowLimit);
 
     // ● private logging
     /// <summary>

@@ -31,6 +31,10 @@ static public class SqlTypeTokens
     /// </summary>
     public const string CNVARCHAR = "@NVARCHAR";
     /// <summary>
+    /// The signed 64-bit integer SQL placeholder.
+    /// </summary>
+    public const string CINT64 = "@INT64";
+    /// <summary>
     /// The FLOAT SQL placeholder.
     /// </summary>
     public const string CFLOAT = "@FLOAT";

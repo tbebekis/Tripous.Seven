@@ -16,6 +16,34 @@ static public class Json
     // ● private fields
     static JsonSerializerOptions fDefaultOptions = CreateJsonOptions();
 
+    // ● private
+    static void NotifyJsonLoaded(object Instance)
+    {
+        if (Instance is IJsonLoadable Loadable)
+            Loadable.JsonLoaded();
+    }
+
+    // ● internal
+    /// <summary>
+    /// Populates an object without invoking its JSON loaded callback.
+    /// The caller is responsible for notification after completing any further work.
+    /// </summary>
+    static internal void PopulateObjectCore(object Instance, string JsonText, JsonSerializerOptions Options = null)
+    {
+        ArgumentNullException.ThrowIfNull(Instance);
+        ArgumentNullException.ThrowIfNull(JsonText);
+        Options ??= fDefaultOptions;
+        using (JsonDocument Document = JsonDocument.Parse(JsonText, new JsonDocumentOptions
+        {
+            AllowTrailingCommas = Options.AllowTrailingCommas,
+            CommentHandling = Options.ReadCommentHandling,
+            MaxDepth = Options.MaxDepth
+        }))
+        {
+            JsonPopulator.PopulateObject(Instance, Document.RootElement, Options);
+        }
+    }
+
     // ● static public
     /// <summary>
     /// Creates JSON options with readable formatting and enum names by default.
@@ -91,37 +119,34 @@ static public class Json
     
     /// <summary>
     /// Creates an object from JSON using the specified options or the default options.
+    /// Notifies the root object after successful deserialization when supported.
     /// </summary>
     static public T Deserialize<T>(string JsonText, JsonSerializerOptions Options = null)
     {
-        return JsonSerializer.Deserialize<T>(JsonText, Options ?? fDefaultOptions);
+        T Result = JsonSerializer.Deserialize<T>(JsonText, Options ?? fDefaultOptions);
+        NotifyJsonLoaded(Result);
+        return Result;
     }
     /// <summary>
     /// Creates an object of the specified type from JSON.
+    /// Notifies the root object after successful deserialization when supported.
     /// </summary>
     static public object Deserialize(string JsonText, Type ReturnType, JsonSerializerOptions Options = null)
     {
-        return JsonSerializer.Deserialize(JsonText, ReturnType, Options ?? fDefaultOptions);
+        object Result = JsonSerializer.Deserialize(JsonText, ReturnType, Options ?? fDefaultOptions);
+        NotifyJsonLoaded(Result);
+        return Result;
     }
    
     /// <summary>
     /// Replaces the contents of an existing object with values from a JSON object.
     /// Missing properties are reset; the root object itself is retained.
+    /// Notifies the root object after successful population when supported.
     /// </summary>
     static public void PopulateObject(object Instance, string JsonText, JsonSerializerOptions Options = null)
     {
-        ArgumentNullException.ThrowIfNull(Instance);
-        ArgumentNullException.ThrowIfNull(JsonText);
-        Options ??= fDefaultOptions;
-        using (JsonDocument Document = JsonDocument.Parse(JsonText, new JsonDocumentOptions
-        {
-            AllowTrailingCommas = Options.AllowTrailingCommas,
-            CommentHandling = Options.ReadCommentHandling,
-            MaxDepth = Options.MaxDepth
-        }))
-        {
-            JsonPopulator.PopulateObject(Instance, Document.RootElement, Options);
-        }
+        PopulateObjectCore(Instance, JsonText, Options);
+        NotifyJsonLoaded(Instance);
     }
   
     /// <summary>

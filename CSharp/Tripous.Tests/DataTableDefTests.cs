@@ -15,6 +15,35 @@ public class DataTableDefTests
 {
     // ● public
     /// <summary>
+    /// SQLite stores Int64 values and generates primary keys beyond Int32.
+    /// </summary>
+    [Fact]
+    public void Int64DefinitionsSupportSqliteGeneratedKeys()
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-int64-{Guid.NewGuid():N}.db");
+        try
+        {
+            DataTableDef Table = new() { Name = "Numbers" };
+            Table.AddInt64("Id").IsPrimaryKey = true;
+            Table.AddInt64("Amount", Required: true);
+            Assert.Contains("Id @INT64", Table.GetDefText());
+            SqlStore Store = new(new DbConnectionInfo { ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            Store.ExecSql(Table.GetDefText());
+            long Large = (long)int.MaxValue + 1;
+            Store.ExecSql("INSERT INTO Numbers (Id, Amount) VALUES (:Id, :Amount)", new SqlParams().Add("Id", Large).Add("Amount", Large));
+            Store.ExecSql("INSERT INTO Numbers (Amount) VALUES (:Amount)", new SqlParams().Add("Amount", Large));
+            DataTable Rows = Store.Select("SELECT Id, Amount FROM Numbers ORDER BY Id");
+            Assert.Equal(Large, Convert.ToInt64(Rows.Rows[0]["Id"]));
+            Assert.Equal(Large + 1, Convert.ToInt64(Rows.Rows[1]["Id"]));
+            Assert.Equal(Large, Convert.ToInt64(Rows.Rows[1]["Amount"]));
+        }
+        finally
+        {
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+    /// <summary>
     /// A table definition creates a usable SQLite table with constraints.
     /// </summary>
     [Fact]
@@ -77,12 +106,18 @@ public class DataTableDefTests
         try
         {
             DbConfig.DefaultPrimaryKeyType = DataFieldType.String;
+            Assert.True(DbConfig.GuidOids);
             var DefaultKey = new DataFieldDef { Name = "Id", IsPrimaryKey = true, Length = 40 };
             var ExplicitKey = new DataFieldDef { Name = "Id", IsPrimaryKey = true, DataType = DataFieldType.Integer };
             Assert.Equal(DataFieldType.String, DefaultKey.DataType);
             Assert.Equal(DataFieldType.Integer, ExplicitKey.DataType);
             DbConfig.DefaultPrimaryKeyType = DataFieldType.Integer;
+            Assert.False(DbConfig.GuidOids);
             Assert.Equal(DataFieldType.Integer, DefaultKey.DataType);
+            Assert.Equal(DataFieldType.Integer, ExplicitKey.DataType);
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.Int64;
+            Assert.False(DbConfig.GuidOids);
+            Assert.Equal(DataFieldType.Int64, DefaultKey.DataType);
             Assert.Equal(DataFieldType.Integer, ExplicitKey.DataType);
         }
         finally
