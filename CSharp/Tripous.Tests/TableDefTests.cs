@@ -41,6 +41,67 @@ public class TableDefTests
 
     // ● public
     /// <summary>
+    /// Literal defaults are typed independently of the current culture and applied to new rows.
+    /// </summary>
+    [Fact]
+    public void DescriptorTableAppliesLiteralDefaults()
+    {
+        var PreviousCulture = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("el-GR");
+            TableDef Definition = new() { Name = "Defaults" };
+            Definition.Fields.Add(new FieldDef { Name = "Id" });
+            Definition.Fields.Add(new FieldDef { Name = "Empty", DefaultValue = "" });
+            Definition.Fields.Add(new FieldDef { Name = "Literal", DefaultValue = "EmptyString" });
+            Definition.Fields.Add(new FieldDef { Name = "Count", DataType = DataFieldType.Integer, DefaultValue = "-42" });
+            Definition.Fields.Add(new FieldDef { Name = "Big", DataType = DataFieldType.Int64, DefaultValue = "2147483648" });
+            Definition.Fields.Add(new FieldDef { Name = "Price", DataType = DataFieldType.Decimal, DefaultValue = "1234.50" });
+            Definition.Fields.Add(new FieldDef { Name = "Rate", DataType = DataFieldType.Double, DefaultValue = "1.5" });
+            Definition.Fields.Add(new FieldDef { Name = "Active", DataType = DataFieldType.Boolean, DefaultValue = "true" });
+            Definition.Fields.Add(new FieldDef { Name = "Day", DataType = DataFieldType.Date, DefaultValue = "2026-11-24" });
+            Definition.Fields.Add(new FieldDef { Name = "When", DataType = DataFieldType.DateTime, DefaultValue = "2026-11-24T14:30:00" });
+            Definition.Fields.Add(new FieldDef { Name = "NoDefault" });
+            MemTable Table = Definition.CreateDescriptorTable();
+            DataRow Row = Table.AddNewRow();
+            Assert.Equal("", Row["Empty"]);
+            Assert.Equal("EmptyString", Row["Literal"]);
+            Assert.Equal(-42, Row["Count"]);
+            Assert.Equal(2147483648L, Row["Big"]);
+            Assert.Equal(1234.50m, Row["Price"]);
+            Assert.Equal(1.5d, Row["Rate"]);
+            Assert.Equal(1, Row["Active"]);
+            Assert.Equal(new DateTime(2026, 11, 24), Row["Day"]);
+            Assert.Equal(new DateTime(2026, 11, 24, 14, 30, 0), Row["When"]);
+            Assert.True(Row.IsNull("NoDefault"));
+            FieldDef Copy = Json.Deserialize<FieldDef>(Json.Serialize(Definition.Fields.Get("Empty")));
+            Assert.Equal("", Copy.DefaultValue);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = PreviousCulture;
+        }
+    }
+    /// <summary>
+    /// Blob defaults and malformed values identify the table and field in the error.
+    /// </summary>
+    [Theory]
+    [InlineData(DataFieldType.Blob, "")]
+    [InlineData(DataFieldType.Integer, "1.5")]
+    [InlineData(DataFieldType.Decimal, "1,5")]
+    [InlineData(DataFieldType.Boolean, "1")]
+    [InlineData(DataFieldType.Date, "24/11/2026")]
+    [InlineData(DataFieldType.DateTime, "2026-11-24T14:30:00Z")]
+    public void DescriptorTableRejectsInvalidDefaults(DataFieldType Type, string Value)
+    {
+        TableDef Definition = new() { Name = "Example" };
+        Definition.Fields.Add(new FieldDef { Name = "Id" });
+        Definition.Fields.Add(new FieldDef { Name = "Bad", DataType = Type, DefaultValue = Value });
+        InvalidOperationException Error = Assert.Throws<InvalidOperationException>(() => Definition.CreateDescriptorTable());
+        Assert.Contains("Example", Error.Message);
+        Assert.Contains("Bad", Error.Message);
+    }
+    /// <summary>
     /// Descriptor tables use the declared types and relation field names.
     /// Boolean fields follow the Tripous integer convention.
     /// </summary>

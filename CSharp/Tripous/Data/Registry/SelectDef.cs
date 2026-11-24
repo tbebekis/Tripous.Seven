@@ -9,25 +9,12 @@
 namespace Tripous.Data;
 
 /// <summary>
-/// Describes a named SELECT for a data module list view.
-/// Its result must include the main table's key under its declared KeyField name.
-/// Tripous applies the row limit; the SELECT must not specify a top-level limit.
+/// Describes a named SELECT statement.
 /// </summary>
 public class SelectDef : BaseDef
 {
     // ● private fields
     string fSqlText;
-
-    // ● public
-    /// <summary>
-    /// Checks that the definition has a name and SQL statement.
-    /// </summary>
-    public override void CheckDescriptor()
-    {
-        base.CheckDescriptor();
-        if (string.IsNullOrWhiteSpace(SqlText))
-            throw new InvalidOperationException("A SELECT SQL statement is required.");
-    }
 
     // ● properties
     /// <summary>

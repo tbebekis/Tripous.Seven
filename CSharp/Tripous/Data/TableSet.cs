@@ -279,64 +279,329 @@ public class TableSet
         fFlags = Flags;
     }
 
-    // ● public
+    // ● list database operations
     /// <summary>
-    /// Replaces the list table contents with the result of the supplied SELECT.
-    /// Uses the table's SelectSql when SqlText is empty and returns the row count.
+    /// Replaces the list table contents using the supplied or configured SELECT.
+    /// Returns the row count on success or the reason the SELECT did not complete.
     /// </summary>
-    public int ListSelect(string SqlText)
+    public TableSetResult ListSelect(string SqlText)
     {
-        string Text = string.IsNullOrWhiteSpace(SqlText) ? fListTable.Sqls.SelectSql : SqlText;
-        if (string.IsNullOrWhiteSpace(Text))
-            return 0;
-        fListTable.EventsDisabled = true;
         try
         {
-            return fStore.SelectTo(fListTable, Text);
+            string Text = string.IsNullOrWhiteSpace(SqlText) ? fListTable.Sqls.SelectSql : SqlText;
+            if (string.IsNullOrWhiteSpace(Text))
+                return new TableSetResult(TableSetResultStatus.ListSelectSqlEmpty, null, null);
+            fListTable.EventsDisabled = true;
+            try
+            {
+                int Count = fStore.SelectTo(fListTable, Text);
+                return new TableSetResult(TableSetResultStatus.Success, null, null, Count);
+            }
+            finally
+            {
+                fListTable.EventsDisabled = false;
+            }
         }
-        finally
+        catch (Exception Error)
         {
-            fListTable.EventsDisabled = false;
+            return new TableSetResult(TableSetResultStatus.ListSelectFailed, null, Error);
         }
     }
     /// <summary>
-    /// Loads one item and all of its detail tables using framework-generated SQL
-    /// in a single transaction.
-    /// Returns false when the supplied ID is empty or the item does not exist.
+    /// Saves changes to the list table in one transaction.
+    /// Supports string and provider-generated integer primary keys.
     /// </summary>
-    public bool Load(object RowId)
+    public TableSetResult ListSave()
     {
-        if (RowId == null || RowId == DBNull.Value || (RowId is string Text && string.IsNullOrWhiteSpace(Text)))
-            return false;
-        fItemTable.CheckTopTableErrors();
-        if (fItemTable.KeyFields.Length != 1)
-            throw new InvalidOperationException("The item table requires a single key field.");
-        if (string.IsNullOrWhiteSpace(fItemTable.Sqls.SelectRowSql))
-            throw new InvalidOperationException($"Table '{fItemTable.TableName}' has no select-row statement.");
-
-        fItemTable.EventsDisabled = true;
+        bool Committed = false;
         try
         {
-            fItemTable.ClearAll();
+            if (fListTable.Rows.Cast<DataRow>().Any(Row => Row.HasVersion(DataRowVersion.Proposed)))
+                throw new InvalidOperationException("Finish editing list rows before saving.");
+            DataRow[] Deleted = fListTable.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray();
+            DataRow[] Modified = fListTable.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified).ToArray();
+            DataRow[] Added = fListTable.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Added).ToArray();
+            if (Deleted.Length + Modified.Length + Added.Length == 0)
+                return new TableSetResult(TableSetResultStatus.Success, null, null);
+            if (fListTable.KeyFields == null || fListTable.KeyFields.Length != 1 || !fListTable.Columns.Contains(fListTable.KeyField))
+                throw new InvalidOperationException("ListSave requires a single key field in the list table.");
+            DataColumn Key = fListTable.Columns[fListTable.KeyField];
+            bool IntegerKey = IsIntegerType(Key.DataType);
+            if (Key.DataType != typeof(string) && !IntegerKey)
+                throw new NotSupportedException("ListSave requires a string, Int32 or Int64 primary key.");
+            OidMode Mode = fStore.OidMode;
+            if (IntegerKey && Added.Length > 0 && Mode == OidMode.None)
+                throw new NotSupportedException("The provider has no integer identifier generation mode.");
+            if (Modified.Any(Row => !Equals(Row[Key, DataRowVersion.Original], Row[Key, DataRowVersion.Current])))
+                throw new InvalidOperationException("ListSave cannot change a primary key.");
+            PrepareListSaveSql(Deleted.Length > 0, Modified.Length > 0, Added.Length > 0);
+            List<(DataRow Row, DataColumn Column, object Value)> PreviousIds = new();
             using (SqlTransactionContext Context = fStore.BeginTransactionContext())
             {
-                fStore.SelectTo(Context.Transaction, fItemTable, fItemTable.Sqls.SelectRowSql, new SqlParams().Add(fItemTable.KeyField, RowId));
-                if (fItemTable.Rows.Count > 1)
-                    throw new InvalidOperationException($"Select for item table '{fItemTable.TableName}' returned more than one row.");
-                LoadDetails(Context.Transaction, fItemTable);
-                Context.Commit();
+                try
+                {
+                    PostDeletes(Context.Transaction, fListTable, Deleted);
+                    PostUpdates(Context.Transaction, fListTable, Modified);
+                    PostInserts(Context.Transaction, fListTable, Added, PreviousIds);
+                    Context.Commit();
+                    Committed = true;
+                }
+                catch
+                {
+                    if (Context.IsActive)
+                    {
+                        try
+                        {
+                            Context.Rollback();
+                            for (int Index = PreviousIds.Count - 1; Index >= 0; Index--)
+                                PreviousIds[Index].Row[PreviousIds[Index].Column] = PreviousIds[Index].Value;
+                        }
+                        catch
+                        {
+                            // TODO: Log rollback or identifier restoration failures.
+                        }
+                    }
+                    throw;
+                }
             }
-            fItemTable.AcceptChangesAll();
+            fListTable.AcceptChanges();
+            return new TableSetResult(TableSetResultStatus.Success, null, null);
         }
-        finally
+        catch (Exception Error)
         {
-            fItemTable.EventsDisabled = false;
+            return new TableSetResult(Committed ? TableSetResultStatus.AfterCommitFailed : TableSetResultStatus.ListSaveFailed, null, Error);
         }
-        fItemTable.RefreshDetails();
-        return fItemTable.Rows.Count == 1;
     }
     /// <summary>
+    /// Rejects pending changes in the list table.
+    /// This only affects the in-memory list table; it does not access the database.
+    /// </summary>
+    public void ListCancel() => fListTable.RejectChanges();
+
+
+    // ● item database operations
+    /// <summary>
+    /// Loads one item and its details. Clears the item tree on failure.
+    /// </summary>
+    public TableSetResult Load(object RowId)
+    {
+        try
+        {
+            ProcessEmpty();
+            if (RowId == null || RowId == DBNull.Value || (RowId is string Text && string.IsNullOrWhiteSpace(Text)))
+                return new TableSetResult(TableSetResultStatus.InvalidId, RowId, null);
+            fItemTable.CheckTopTableErrors();
+            if (fItemTable.KeyFields.Length != 1)
+                throw new InvalidOperationException("The item table requires a single key field.");
+            if (string.IsNullOrWhiteSpace(fItemTable.Sqls.SelectRowSql))
+                throw new InvalidOperationException($"Table '{fItemTable.TableName}' has no select-row statement.");
+
+            fItemTable.EventsDisabled = true;
+            try
+            {
+                using (SqlTransactionContext Context = fStore.BeginTransactionContext())
+                {
+                    fStore.SelectTo(Context.Transaction, fItemTable, fItemTable.Sqls.SelectRowSql, new SqlParams().Add(fItemTable.KeyField, RowId));
+                    if (fItemTable.Rows.Count > 1)
+                        throw new InvalidOperationException($"Select for item table '{fItemTable.TableName}' returned more than one row.");
+                    LoadDetails(Context.Transaction, fItemTable);
+                    Context.Commit();
+                }
+                fItemTable.AcceptChangesAll();
+            }
+            finally
+            {
+                fItemTable.EventsDisabled = false;
+            }
+            fItemTable.RefreshDetails();
+            return new TableSetResult(fItemTable.Rows.Count == 1 ? TableSetResultStatus.Success : TableSetResultStatus.NotFound, RowId, null);
+        }
+        catch (Exception Error)
+        {
+            try { ProcessEmpty(); }
+            catch (Exception CleanupError) { Error = new AggregateException(Error, CleanupError); }
+            return new TableSetResult(TableSetResultStatus.LoadFailed, RowId, Error);
+        }
+    }
+    /// <summary>
+    /// Loads and deletes an item and its detail tree in a transaction.
+    /// A post-commit event can fail after the database deletion has completed.
+    /// </summary>
+    public TableSetResult Delete(object RowId)
+    {
+        bool Committed = false;
+        try
+        {
+            TableSetResult LoadResult = Load(RowId);
+            if (LoadResult.Status != TableSetResultStatus.Success)
+                return LoadResult;
+
+            fItemTable.EventsDisabled = true;
+            try
+            {
+                fItemTable.DeleteAll(false);
+                NotifyTransactionStageDelete(null, TransactionStage.Start, ExecTime.Before, RowId);
+                using (SqlTransactionContext Context = fStore.BeginTransactionContext())
+                {
+                    DbTransaction Transaction = Context.Transaction;
+                    try
+                    {
+                        NotifyTransactionStageDelete(Transaction, TransactionStage.Start, ExecTime.After, RowId);
+                        NotifyTransactionStageDelete(Transaction, TransactionStage.Post, ExecTime.Before, RowId);
+                        List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
+                        CheckItemSaveTables(Tables);
+                        foreach (MemTable Table in Tables.OrderByDescending(Item => Item.Level))
+                            PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
+                        NotifyTransactionStageDelete(Transaction, TransactionStage.Post, ExecTime.After, RowId);
+                        NotifyTransactionStageDelete(Transaction, TransactionStage.Commit, ExecTime.Before, RowId);
+                        Context.Commit();
+                        Committed = true;
+                        fItemTable.AcceptChangesAll();
+                        NotifyTransactionStageDelete(Transaction, TransactionStage.Commit, ExecTime.After, RowId);
+                    }
+                    catch
+                    {
+                        if (Context.IsActive)
+                        {
+                            try { NotifyTransactionStageDelete(Transaction, TransactionStage.Rollback, ExecTime.Before, RowId); }
+                            catch { /* TODO: Log rollback notification failures. */ }
+                            bool RolledBack = false;
+                            try
+                            {
+                                Context.Rollback();
+                                RolledBack = true;
+                            }
+                            catch { /* TODO: Log rollback failures. */ }
+                            if (RolledBack)
+                            {
+                                try { NotifyTransactionStageDelete(Transaction, TransactionStage.Rollback, ExecTime.After, RowId); }
+                                catch { /* TODO: Log rollback notification failures. */ }
+                            }
+                        }
+                        throw;
+                    }
+                }
+            }
+            catch
+            {
+                if (!Committed)
+                {
+                    try
+                    {
+                        fItemTable.RejectChangesAll();
+                        fItemTable.RefreshDetails();
+                    }
+                    catch { /* TODO: Log item restoration failures. */ }
+                }
+                throw;
+            }
+            finally
+            {
+                fItemTable.EventsDisabled = false;
+            }
+            fItemTable.UpdateCurrentRow();
+            return new TableSetResult(TableSetResultStatus.Success, RowId, null);
+        }
+        catch (Exception Error)
+        {
+            return new TableSetResult(Committed ? TableSetResultStatus.AfterCommitFailed : TableSetResultStatus.DeleteFailed, RowId, Error);
+        }
+    }
+    /// <summary>
+    /// Saves the item tree in one transaction.
+    /// Returns the outcome, ID and any exception, including failures after the database commits.
+    /// </summary>
+    public TableSetResult Commit(bool Reselect)
+    {
+        bool Committed = false;
+        object RowId = null;
+        try
+        {
+            if (fItemTable.Rows.Count != 1 || fItemTable.Rows[0].RowState == DataRowState.Deleted)
+                throw new InvalidOperationException("The item table must contain one active row to commit.");
+
+            List<(DataRow Row, DataColumn Column, object Value)> PreviousValues = new();
+            fItemTable.EventsDisabled = true;
+            try
+            {
+                NotifyTransactionStageCommit(null, TransactionStage.Start, ExecTime.Before);
+                using (SqlTransactionContext Context = fStore.BeginTransactionContext())
+                {
+                    DbTransaction Transaction = Context.Transaction;
+                    try
+                    {
+                        NotifyTransactionStageCommit(Transaction, TransactionStage.Start, ExecTime.After);
+                        NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.Before);
+                        List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
+                        CheckItemSaveTables(Tables);
+                        foreach (MemTable Table in Tables.OrderByDescending(Item => Item.Level))
+                            PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
+                        foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
+                            PostUpdates(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified).ToArray());
+                        foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
+                            PostInserts(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Added).ToArray(), PreviousValues, true);
+                        NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.After);
+                        NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.Before);
+                        Context.Commit();
+                        Committed = true;
+                        RowId = fItemTable.Rows[0][fItemTable.KeyField];
+                        fItemTable.AcceptChangesAll();
+                        NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.After);
+                    }
+                    catch
+                    {
+                        if (Context.IsActive)
+                        {
+                            try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.Before); }
+                            catch { /* TODO: Log rollback notification failures. */ }
+                            bool RolledBack = false;
+                            try
+                            {
+                                Context.Rollback();
+                                RolledBack = true;
+                            }
+                            catch { /* TODO: Log rollback failures. */ }
+                            if (RolledBack)
+                            {
+                                for (int Index = PreviousValues.Count - 1; Index >= 0; Index--)
+                                {
+                                    try { PreviousValues[Index].Row[PreviousValues[Index].Column] = PreviousValues[Index].Value; }
+                                    catch { /* TODO: Log identifier restoration failures. */ }
+                                }
+                                try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.After); }
+                                catch { /* TODO: Log rollback notification failures. */ }
+                            }
+                        }
+                        throw;
+                    }
+                }
+            }
+            finally
+            {
+                fItemTable.EventsDisabled = false;
+            }
+
+            if (Reselect)
+            {
+                TableSetResult LoadResult = Load(RowId);
+                if (LoadResult.Status == TableSetResultStatus.LoadFailed)
+                    ExceptionDispatchInfo.Capture(LoadResult.Exception).Throw();
+                if (LoadResult.Status != TableSetResultStatus.Success)
+                    throw new InvalidOperationException("The committed item could not be reloaded.");
+            }
+            fItemTable.UpdateCurrentRow();
+            return new TableSetResult(TableSetResultStatus.Success, RowId, null);
+        }
+        catch (Exception Error)
+        {
+            return new TableSetResult(Committed ? TableSetResultStatus.AfterCommitFailed : TableSetResultStatus.CommitFailed, RowId, Error);
+        }
+    }
+
+    // ● item edit operations
+    /// <summary>
     /// Cancels pending edits and clears the item table and all its details.
+    /// This only affects the in-memory item tree; it does not access the database.
     /// </summary>
     public void ProcessEmpty()
     {
@@ -354,6 +619,7 @@ public class TableSet
     }
     /// <summary>
     /// Clears the item tree and prepares one new top row for insertion.
+    /// This only affects the in-memory item tree; it does not access the database.
     /// </summary>
     public void ProcessInsert()
     {
@@ -370,226 +636,20 @@ public class TableSet
         fItemTable.UpdateCurrentRow();
     }
     /// <summary>
-    /// Accepts changes in the item table and its detail tree.
+    /// Accepts changes in the item table and its detail tree in memory.
+    /// This does not save changes to the database.
     /// </summary>
     public void AcceptChanges() => fItemTable.AcceptChangesAll();
     /// <summary>
-    /// Rejects changes in the item table and its detail tree.
+    /// Rejects changes in the item table and its detail tree in memory.
+    /// This does not modify the database.
     /// </summary>
     public void RejectChanges() => fItemTable.RejectChangesAll();
     /// <summary>
-    /// Returns whether the item table or any of its details has changes.
+    /// Returns whether the in-memory item table or any of its details has changes.
+    /// This does not query the database.
     /// </summary>
     public bool HasChanges() => fItemTable.HasChangesAll();
-    /// <summary>
-    /// Loads and deletes an item and its detail tree in a transaction.
-    /// A post-commit event can fail after the database deletion has completed.
-    /// </summary>
-    public void Delete(object RowId)
-    {
-        if (!Load(RowId))
-            return;
-
-        bool Committed = false;
-        fItemTable.EventsDisabled = true;
-        try
-        {
-            fItemTable.DeleteAll(false);
-            NotifyTransactionStageDelete(null, TransactionStage.Start, ExecTime.Before, RowId);
-            using (SqlTransactionContext Context = fStore.BeginTransactionContext())
-            {
-                DbTransaction Transaction = Context.Transaction;
-                try
-                {
-                    NotifyTransactionStageDelete(Transaction, TransactionStage.Start, ExecTime.After, RowId);
-                    NotifyTransactionStageDelete(Transaction, TransactionStage.Post, ExecTime.Before, RowId);
-                    List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
-                    CheckItemSaveTables(Tables);
-                    foreach (MemTable Table in Tables.OrderByDescending(Item => Item.Level))
-                        PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
-                    NotifyTransactionStageDelete(Transaction, TransactionStage.Post, ExecTime.After, RowId);
-                    NotifyTransactionStageDelete(Transaction, TransactionStage.Commit, ExecTime.Before, RowId);
-                    Context.Commit();
-                    Committed = true;
-                    fItemTable.AcceptChangesAll();
-                    NotifyTransactionStageDelete(Transaction, TransactionStage.Commit, ExecTime.After, RowId);
-                }
-                catch
-                {
-                    if (Context.IsActive)
-                    {
-                        try { NotifyTransactionStageDelete(Transaction, TransactionStage.Rollback, ExecTime.Before, RowId); }
-                        catch { /* TODO: Log rollback notification failures. */ }
-                        bool RolledBack = false;
-                        try
-                        {
-                            Context.Rollback();
-                            RolledBack = true;
-                        }
-                        catch { /* TODO: Log rollback failures. */ }
-                        if (RolledBack)
-                        {
-                            try { NotifyTransactionStageDelete(Transaction, TransactionStage.Rollback, ExecTime.After, RowId); }
-                            catch { /* TODO: Log rollback notification failures. */ }
-                        }
-                    }
-                    throw;
-                }
-            }
-        }
-        catch
-        {
-            if (!Committed)
-            {
-                try
-                {
-                    fItemTable.RejectChangesAll();
-                    fItemTable.RefreshDetails();
-                }
-                catch { /* TODO: Log item restoration failures. */ }
-            }
-            throw;
-        }
-        finally
-        {
-            fItemTable.EventsDisabled = false;
-        }
-        fItemTable.UpdateCurrentRow();
-    }
-    /// <summary>
-    /// Saves the item tree in one transaction and returns the top row's key.
-    /// A post-commit event or optional reload can fail after the database commits.
-    /// </summary>
-    public object Commit(bool Reselect = false)
-    {
-        if (fItemTable.Rows.Count != 1 || fItemTable.Rows[0].RowState == DataRowState.Deleted)
-            throw new InvalidOperationException("The item table must contain one active row to commit.");
-
-        List<(DataRow Row, DataColumn Column, object Value)> PreviousValues = new();
-        fItemTable.EventsDisabled = true;
-        try
-        {
-            NotifyTransactionStageCommit(null, TransactionStage.Start, ExecTime.Before);
-            using (SqlTransactionContext Context = fStore.BeginTransactionContext())
-            {
-                DbTransaction Transaction = Context.Transaction;
-                try
-                {
-                    NotifyTransactionStageCommit(Transaction, TransactionStage.Start, ExecTime.After);
-                    NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.Before);
-                    List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
-                    CheckItemSaveTables(Tables);
-                    foreach (MemTable Table in Tables.OrderByDescending(Item => Item.Level))
-                        PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
-                    foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
-                        PostUpdates(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified).ToArray());
-                    foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
-                        PostInserts(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Added).ToArray(), PreviousValues, true);
-                    NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.After);
-                    NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.Before);
-                    Context.Commit();
-                    fItemTable.AcceptChangesAll();
-                    NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.After);
-                }
-                catch
-                {
-                    if (Context.IsActive)
-                    {
-                        try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.Before); }
-                        catch { /* TODO: Log rollback notification failures. */ }
-                        bool RolledBack = false;
-                        try
-                        {
-                            Context.Rollback();
-                            RolledBack = true;
-                        }
-                        catch { /* TODO: Log rollback failures. */ }
-                        if (RolledBack)
-                        {
-                            for (int Index = PreviousValues.Count - 1; Index >= 0; Index--)
-                            {
-                                try { PreviousValues[Index].Row[PreviousValues[Index].Column] = PreviousValues[Index].Value; }
-                                catch { /* TODO: Log identifier restoration failures. */ }
-                            }
-                            try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.After); }
-                            catch { /* TODO: Log rollback notification failures. */ }
-                        }
-                    }
-                    throw;
-                }
-            }
-        }
-        finally
-        {
-            fItemTable.EventsDisabled = false;
-        }
-
-        object RowId = fItemTable.Rows[0][fItemTable.KeyField];
-        if (Reselect && RowId != DBNull.Value && RowId != null && !(RowId is string Text && string.IsNullOrWhiteSpace(Text)))
-            Load(RowId);
-        fItemTable.UpdateCurrentRow();
-        return RowId;
-    }
-    /// <summary>
-    /// Saves changes to the list table in one transaction.
-    /// Supports string and provider-generated integer primary keys.
-    /// </summary>
-    public void ListSave()
-    {
-        if (fListTable.Rows.Cast<DataRow>().Any(Row => Row.HasVersion(DataRowVersion.Proposed)))
-            throw new InvalidOperationException("Finish editing list rows before saving.");
-        DataRow[] Deleted = fListTable.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray();
-        DataRow[] Modified = fListTable.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified).ToArray();
-        DataRow[] Added = fListTable.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Added).ToArray();
-        if (Deleted.Length + Modified.Length + Added.Length == 0)
-            return;
-        if (fListTable.KeyFields == null || fListTable.KeyFields.Length != 1 || !fListTable.Columns.Contains(fListTable.KeyField))
-            throw new InvalidOperationException("ListSave requires a single key field in the list table.");
-        DataColumn Key = fListTable.Columns[fListTable.KeyField];
-        bool IntegerKey = IsIntegerType(Key.DataType);
-        if (Key.DataType != typeof(string) && !IntegerKey)
-            throw new NotSupportedException("ListSave requires a string, Int32 or Int64 primary key.");
-        OidMode Mode = fStore.OidMode;
-        if (IntegerKey && Added.Length > 0 && Mode == OidMode.None)
-            throw new NotSupportedException("The provider has no integer identifier generation mode.");
-        if (Modified.Any(Row => !Equals(Row[Key, DataRowVersion.Original], Row[Key, DataRowVersion.Current])))
-            throw new InvalidOperationException("ListSave cannot change a primary key.");
-        PrepareListSaveSql(Deleted.Length > 0, Modified.Length > 0, Added.Length > 0);
-        List<(DataRow Row, DataColumn Column, object Value)> PreviousIds = new();
-        using (SqlTransactionContext Context = fStore.BeginTransactionContext())
-        {
-            try
-            {
-                PostDeletes(Context.Transaction, fListTable, Deleted);
-                PostUpdates(Context.Transaction, fListTable, Modified);
-                PostInserts(Context.Transaction, fListTable, Added, PreviousIds);
-                Context.Commit();
-            }
-            catch
-            {
-                if (Context.IsActive)
-                {
-                    try
-                    {
-                        Context.Rollback();
-                        for (int Index = PreviousIds.Count - 1; Index >= 0; Index--)
-                            PreviousIds[Index].Row[PreviousIds[Index].Column] = PreviousIds[Index].Value;
-                    }
-                    catch
-                    {
-                        // TODO: Log rollback or identifier restoration failures.
-                    }
-                }
-                throw;
-            }
-        }
-        fListTable.AcceptChanges();
-    }
-    /// <summary>
-    /// Rejects pending changes in the list table.
-    /// Detail tables are not affected.
-    /// </summary>
-    public void ListCancel() => fListTable.RejectChanges();
 
     // ● events
     /// <summary>

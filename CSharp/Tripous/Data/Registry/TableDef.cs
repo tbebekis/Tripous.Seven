@@ -20,6 +20,52 @@ public class TableDef : BaseDef
     DefList<FieldDef> fFields;
     DefList<TableDef> fDetails;
 
+    // ● private
+    object ParseDefaultValue(FieldDef Field)
+    {
+        string Value = Field.DefaultValue;
+        try
+        {
+            var Culture = System.Globalization.CultureInfo.InvariantCulture;
+            var IntegerStyle = System.Globalization.NumberStyles.AllowLeadingSign;
+            var NumberStyle = IntegerStyle | System.Globalization.NumberStyles.AllowDecimalPoint;
+            switch (Field.DataType)
+            {
+                case DataFieldType.String:
+                case DataFieldType.TextBlob:
+                    return Value;
+                case DataFieldType.Integer:
+                    return int.Parse(Value, IntegerStyle, Culture);
+                case DataFieldType.Int64:
+                    return long.Parse(Value, IntegerStyle, Culture);
+                case DataFieldType.Double:
+                    double Number = double.Parse(Value, NumberStyle, Culture);
+                    if (!double.IsFinite(Number))
+                        throw new FormatException("A finite number is required.");
+                    return Number;
+                case DataFieldType.Decimal:
+                case DataFieldType.Decimal_:
+                    return decimal.Parse(Value, NumberStyle, Culture);
+                case DataFieldType.Boolean:
+                    if (string.Equals(Value, "true", StringComparison.OrdinalIgnoreCase)) return 1;
+                    if (string.Equals(Value, "false", StringComparison.OrdinalIgnoreCase)) return 0;
+                    throw new FormatException("Expected true or false.");
+                case DataFieldType.Date:
+                    return DateTime.ParseExact(Value, "yyyy-MM-dd", Culture, System.Globalization.DateTimeStyles.None);
+                case DataFieldType.DateTime:
+                    return DateTime.ParseExact(Value, new[] { "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF" }, Culture, System.Globalization.DateTimeStyles.None);
+                case DataFieldType.Blob:
+                    throw new NotSupportedException("Blob defaults are not supported.");
+                default:
+                    throw new NotSupportedException("The field type does not support defaults.");
+            }
+        }
+        catch (Exception Error) when (Error is FormatException or OverflowException or NotSupportedException)
+        {
+            throw new InvalidOperationException($"Invalid default for field '{Field.Name}' in table '{Name}'.", Error);
+        }
+    }
+
     // ● public
     /// <summary>
     /// Creates a memory table and its columns from this definition.
@@ -57,6 +103,14 @@ public class TableDef : BaseDef
             DataColumn Column = new(Field.Name, ColumnType) { Caption = Field.Title };
             if (ColumnType == typeof(string))
                 Column.MaxLength = Field.MaxLength;
+            if (Field.DefaultValue != null)
+            {
+                try { Column.DefaultValue = ParseDefaultValue(Field); }
+                catch (Exception Error) when (Error is not InvalidOperationException)
+                {
+                    throw new InvalidOperationException($"Invalid default for field '{Field.Name}' in table '{Name}'.", Error);
+                }
+            }
             Table.Columns.Add(Column);
         }
         Table.InitializeAutoInc();

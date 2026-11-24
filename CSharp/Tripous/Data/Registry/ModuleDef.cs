@@ -18,6 +18,7 @@ public class ModuleDef : BaseDef
     string fConnectionName;
     string fClassName;
     SelectDefs fSelectList;
+    SelectDefs fStocks;
 
     // ● public
     /// <summary>
@@ -37,6 +38,8 @@ public class ModuleDef : BaseDef
         Table?.UpdateReferences();
         foreach (SelectDef Select in SelectList)
             Select.Owner = this;
+        foreach (SelectDef Stock in Stocks)
+            Stock.Owner = this;
     }
     /// <summary>
     /// Returns the item table definitions in master-before-detail order.
@@ -71,6 +74,20 @@ public class ModuleDef : BaseDef
                 return;
             fSelectList = value;
             NotifyPropertyChanged(nameof(SelectList));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the named SELECT definitions for independent stock tables.
+    /// </summary>
+    public SelectDefs Stocks
+    {
+        get => fStocks ??= new();
+        set
+        {
+            if (ReferenceEquals(fStocks, value))
+                return;
+            fStocks = value;
+            NotifyPropertyChanged(nameof(Stocks));
         }
     }
     /// <summary>

@@ -98,11 +98,11 @@ public class TableSetTests
             Assert.Equal(-1L, AddressRow["Id"]);
             TableSet Set = new(Store, new MemTable("List"), Customer);
 
-            Assert.Equal(2147483648L, Set.Commit());
+            Assert.Equal(2147483648L, Set.Commit(false).Id);
             Assert.Equal(2147483648L, AddressRow["Id"]);
             Assert.Equal(2147483648L, AddressRow["CustomerId"]);
             Set.ProcessEmpty();
-            Assert.True(Set.Load(2147483648L));
+            Assert.Equal(TableSetResultStatus.Success, Set.Load(2147483648L).Status);
             DataRow LoadedCustomer = Assert.Single(Customer.Rows.Cast<DataRow>());
             DataRow LoadedAddress = Assert.Single(Address.Rows.Cast<DataRow>());
             Assert.Equal("Theo", LoadedCustomer["Name"]);
@@ -154,10 +154,10 @@ public class TableSetTests
             string AddressId = (string)AddressRow["Id"];
             TableSet Set = new(Store, new MemTable("List"), Customer);
 
-            Assert.Equal(CustomerId, Set.Commit());
+            Assert.Equal(CustomerId, Set.Commit(false).Id);
             Assert.Equal(CustomerId, AddressRow["CustomerId"]);
             Set.ProcessEmpty();
-            Assert.True(Set.Load(CustomerId));
+            Assert.Equal(TableSetResultStatus.Success, Set.Load(CustomerId).Status);
             DataRow LoadedCustomer = Assert.Single(Customer.Rows.Cast<DataRow>());
             DataRow LoadedAddress = Assert.Single(Address.Rows.Cast<DataRow>());
             Assert.Equal("Theo", LoadedCustomer["Name"]);
@@ -207,13 +207,20 @@ public class TableSetTests
             List.Sqls.SelectSql = "SELECT Id, Name FROM Country ORDER BY Id";
             TableSet Set = new(Store, List, new MemTable("Item"));
 
-            int Count = Set.ListSelect("");
+            TableSetResult Result = Set.ListSelect("");
+            Assert.Equal(TableSetResultStatus.Success, Result.Status);
+            int Count = Result.RowCount;
 
             Assert.Equal(2, Count);
             Assert.Equal("GR", List.Rows[0]["Id"]);
             Assert.Equal("IT", List.Rows[1]["Id"]);
             Assert.All(List.Rows.Cast<DataRow>(), Row => Assert.Equal(DataRowState.Unchanged, Row.RowState));
             Assert.False(List.EventsDisabled);
+            TableSetResult EmptyRows = Set.ListSelect("SELECT Id, Name FROM Country WHERE 1 = 0");
+            Assert.Equal(TableSetResultStatus.Success, EmptyRows.Status);
+            Assert.Equal(0, EmptyRows.RowCount);
+            List.Sqls.SelectSql = "";
+            Assert.Equal(TableSetResultStatus.ListSelectSqlEmpty, Set.ListSelect("").Status);
         }
         finally
         {
@@ -236,11 +243,11 @@ public class TableSetTests
             MemTable List = new("List");
             TableSet Set = new(Store, List, new MemTable("Item"));
 
-            Assert.Equal(1, Set.ListSelect("SELECT Id, Name FROM Customer"));
+            Assert.Equal(1, Set.ListSelect("SELECT Id, Name FROM Customer").RowCount);
             Assert.Equal(new[] { "Id", "Name" }, List.Columns.Cast<DataColumn>().Select(Column => Column.ColumnName));
             Assert.Equal("Theo", List.Rows[0]["Name"]);
 
-            Assert.Equal(1, Set.ListSelect("SELECT Id, Code FROM Customer"));
+            Assert.Equal(1, Set.ListSelect("SELECT Id, Code FROM Customer").RowCount);
             Assert.Equal(new[] { "Id", "Name", "Code" }, List.Columns.Cast<DataColumn>().Select(Column => Column.ColumnName));
             Assert.Equal("1", List.Rows[0]["Id"]);
             Assert.True(List.Rows[0].IsNull("Name"));
@@ -267,9 +274,11 @@ public class TableSetTests
             MemTable List = new("List");
             TableSet Set = new(Store, List, new MemTable("Item"));
 
-            Assert.Equal(1, Set.ListSelect("SELECT Id, Name FROM Customer"));
+            Assert.Equal(1, Set.ListSelect("SELECT Id, Name FROM Customer").RowCount);
             Assert.False(List.Columns["Name"].AllowDBNull);
-            Assert.Throws<ConstraintException>(() => Set.ListSelect("SELECT Id, Code FROM Customer"));
+            TableSetResult Result = Set.ListSelect("SELECT Id, Code FROM Customer");
+            Assert.Equal(TableSetResultStatus.ListSelectFailed, Result.Status);
+            Assert.IsType<ConstraintException>(Result.Exception);
         }
         finally
         {
@@ -314,7 +323,7 @@ public class TableSetTests
             Item.DetailsActive = true;
             TableSet Set = new(Store, new MemTable("List"), Item);
 
-            Assert.True(Set.Load("O1"));
+            Assert.Equal(TableSetResultStatus.Success, Set.Load("O1").Status);
 
             Assert.Single(Item.Rows.Cast<DataRow>());
             Assert.Equal(205, Lines.Rows.Count);
@@ -325,9 +334,11 @@ public class TableSetTests
             Assert.Equal(Lines.CurrentRow["Id"], Assert.Single(Parts.DataView.Cast<DataRowView>())["LineId"]);
             Assert.All(Parts.Rows.Cast<DataRow>(), Row => Assert.Equal(DataRowState.Unchanged, Row.RowState));
             Assert.False(Item.EventsDisabled);
-            Assert.False(Set.Load(null));
-            Assert.Single(Item.Rows.Cast<DataRow>());
-            Assert.False(Set.Load("Missing"));
+            Assert.Equal(TableSetResultStatus.InvalidId, Set.Load(null).Status);
+            Assert.Empty(Item.Rows.Cast<DataRow>());
+            Assert.Empty(Lines.Rows.Cast<DataRow>());
+            Assert.Empty(Parts.Rows.Cast<DataRow>());
+            Assert.Equal(TableSetResultStatus.NotFound, Set.Load("Missing").Status);
             Assert.Empty(Item.Rows.Cast<DataRow>());
             Assert.Empty(Lines.Rows.Cast<DataRow>());
             Assert.Empty(Parts.Rows.Cast<DataRow>());
@@ -360,7 +371,15 @@ public class TableSetTests
             Item.AddDetail(Lines);
             TableSet Set = new(Store, new MemTable("List"), Item);
 
-            Assert.Throws<SqliteException>(() => Set.Load("O1"));
+            TableSetResult Result = Set.Load("O1");
+            Assert.Equal(TableSetResultStatus.LoadFailed, Result.Status);
+            Assert.IsType<SqliteException>(Result.Exception);
+            Assert.Empty(Item.Rows.Cast<DataRow>());
+            Assert.Empty(Lines.Rows.Cast<DataRow>());
+            TableSetResult DeleteResult = Set.Delete("O1");
+            Assert.Equal(TableSetResultStatus.LoadFailed, DeleteResult.Status);
+            Assert.Equal("O1", DeleteResult.Id);
+            Assert.IsType<SqliteException>(DeleteResult.Exception);
 
             Assert.False(Item.EventsDisabled);
             Assert.False(Lines.EventsDisabled);
@@ -474,9 +493,11 @@ public class TableSetTests
                     Args.Store.ExecSql(Args.Transaction, "INSERT INTO Audit (Message) VALUES ('Post')");
             };
 
-            object Id = Set.Commit();
+            TableSetResult Result = Set.Commit(false);
 
-            Assert.Equal(1, Id);
+            Assert.Equal(TableSetResultStatus.Success, Result.Status);
+            Assert.Null(Result.Exception);
+            Assert.Equal(1, Result.Id);
             Assert.Equal(1, ItemRow["Id"]);
             Assert.Equal(1, DetailRow["ItemId"]);
             Assert.Equal(1, SubRow["DetailId"]);
@@ -534,7 +555,7 @@ public class TableSetTests
             Assert.True(Guid.TryParse(DetailId, out _));
             TableSet Set = new(Store, new MemTable("List"), Item);
 
-            Assert.Equal(ItemId, Set.Commit());
+            Assert.Equal(ItemId, Set.Commit(false).Id);
 
             Assert.Equal(ItemId, DetailRow["ItemId"]);
             Assert.Equal(DetailId, SubRow["DetailId"]);
@@ -577,7 +598,9 @@ public class TableSetTests
                     Args.Store.ExecSql(Args.Transaction, "INSERT INTO Audit (Message) VALUES ('Post')");
             };
 
-            Assert.Throws<SqliteException>(() => Set.Commit());
+            TableSetResult Result = Set.Commit(false);
+            Assert.Equal(TableSetResultStatus.CommitFailed, Result.Status);
+            Assert.IsType<SqliteException>(Result.Exception);
 
             Assert.Equal(-1, ItemRow["Id"]);
             Assert.Equal(-1, DetailRow["Id"]);
@@ -626,7 +649,7 @@ public class TableSetTests
             ItemRow["Name"] = "Changed";
             TableSet Set = new(Store, new MemTable("List"), Item);
 
-            Assert.Equal(1, Set.Commit());
+            Assert.Equal(1, Set.Commit(false).Id);
 
             Assert.Equal("Changed", Store.Select("SELECT Name FROM Item WHERE Id = 1").Rows[0]["Name"]);
             Assert.Equal(0L, Store.Select("SELECT COUNT(*) AS Total FROM Detail").Rows[0]["Total"]);
@@ -663,11 +686,46 @@ public class TableSetTests
                     throw new InvalidOperationException("After-commit handler failed.");
             };
 
-            Assert.Throws<InvalidOperationException>(() => Set.Commit());
+            TableSetResult Result = Set.Commit(false);
+            Assert.Equal(TableSetResultStatus.AfterCommitFailed, Result.Status);
+            Assert.Equal("I1", Result.Id);
+            Assert.IsType<InvalidOperationException>(Result.Exception);
 
             Assert.Equal("Saved", Store.Select("SELECT Name FROM Item WHERE Id = 'I1'").Rows[0]["Name"]);
             Assert.Equal(DataRowState.Unchanged, Row.RowState);
             Assert.False(Item.EventsDisabled);
+        }
+        finally
+        {
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+    /// <summary>
+    /// A missing reselected row is reported after the database commit.
+    /// </summary>
+    [Fact]
+    public void CommitReportsMissingReselectedItem()
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-reselect-{Guid.NewGuid():N}.db");
+        try
+        {
+            SqlStore Store = new(new DbConnectionInfo { Name = "ReselectMissing", ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            Store.ExecSql("CREATE TABLE Item (Id TEXT PRIMARY KEY, Name TEXT NOT NULL)");
+            MemTable Item = new("Item");
+            Item.Columns.Add("Id", typeof(string));
+            Item.Columns.Add("Name", typeof(string));
+            Item.Sqls.InsertRowSql = "INSERT INTO Item (Id, Name) VALUES (:Id, :Name)";
+            Item.Sqls.SelectRowSql = "SELECT Id, Name FROM Item WHERE Id = :Id AND 1 = 0";
+            Item.Rows.Add("I1", "Saved");
+            TableSet Set = new(Store, new MemTable("List"), Item);
+
+            TableSetResult Result = Set.Commit(true);
+
+            Assert.Equal(TableSetResultStatus.AfterCommitFailed, Result.Status);
+            Assert.Equal("I1", Result.Id);
+            Assert.IsType<InvalidOperationException>(Result.Exception);
+            Assert.Equal("Saved", Store.Select("SELECT Name FROM Item WHERE Id = 'I1'").Rows[0]["Name"]);
         }
         finally
         {
@@ -702,7 +760,10 @@ public class TableSetTests
                     Args.Store.ExecSql(Args.Transaction, "INSERT INTO Audit (Message) VALUES ('Delete')");
             };
 
-            Set.Delete(1);
+            TableSetResult Result = Set.Delete(1);
+            Assert.Equal(TableSetResultStatus.Success, Result.Status);
+            Assert.Equal(1, Result.Id);
+            Assert.Null(Result.Exception);
 
             Assert.Empty(Item.Rows.Cast<DataRow>());
             Assert.Empty(Detail.Rows.Cast<DataRow>());
@@ -713,7 +774,8 @@ public class TableSetTests
             Assert.Equal(1L, Store.Select("SELECT COUNT(*) AS Total FROM Audit").Rows[0]["Total"]);
             Assert.Equal(new[] { "Start/Before", "Start/After", "Post/Before", "Post/After", "Commit/Before", "Commit/After" }, Stages);
             Assert.False(Item.EventsDisabled);
-            Set.Delete(12345);
+            Assert.Equal(TableSetResultStatus.NotFound, Set.Delete(12345).Status);
+            Assert.Equal(TableSetResultStatus.InvalidId, Set.Delete(null).Status);
             Assert.Equal(6, Stages.Count);
         }
         finally
@@ -744,7 +806,10 @@ public class TableSetTests
             List<string> Stages = new();
             Set.TransactionStageDelete += (Sender, Args) => Stages.Add($"{Args.Stage}/{Args.ExecTime}");
 
-            Assert.Throws<SqliteException>(() => Set.Delete(1));
+            TableSetResult Result = Set.Delete(1);
+            Assert.Equal(TableSetResultStatus.DeleteFailed, Result.Status);
+            Assert.Equal(1, Result.Id);
+            Assert.IsType<SqliteException>(Result.Exception);
 
             Assert.Equal(1L, Store.Select("SELECT COUNT(*) AS Total FROM Item").Rows[0]["Total"]);
             Assert.Equal(1L, Store.Select("SELECT COUNT(*) AS Total FROM Detail").Rows[0]["Total"]);
@@ -791,7 +856,10 @@ public class TableSetTests
                     throw new InvalidOperationException("After-commit handler failed.");
             };
 
-            Assert.Throws<InvalidOperationException>(() => Set.Delete("I1"));
+            TableSetResult Result = Set.Delete("I1");
+            Assert.Equal(TableSetResultStatus.AfterCommitFailed, Result.Status);
+            Assert.Equal("I1", Result.Id);
+            Assert.IsType<InvalidOperationException>(Result.Exception);
 
             Assert.Empty(Item.Rows.Cast<DataRow>());
             Assert.Equal(0L, Store.Select("SELECT COUNT(*) AS Total FROM Item").Rows[0]["Total"]);
@@ -855,7 +923,7 @@ public class TableSetTests
             DataRow Added = List.Rows.Add("3", "Added");
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Set.ListSave();
+            Assert.Equal(TableSetResultStatus.Success, Set.ListSave().Status);
 
             DataTable Result = Store.Select("SELECT Id, Name FROM Customer ORDER BY Id");
             Assert.Equal(2, Result.Rows.Count);
@@ -895,7 +963,9 @@ public class TableSetTests
             DataRow Added = List.Rows.Add("1", "Duplicate");
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Assert.Throws<SqliteException>(() => Set.ListSave());
+            TableSetResult Result = Set.ListSave();
+            Assert.Equal(TableSetResultStatus.ListSaveFailed, Result.Status);
+            Assert.IsType<SqliteException>(Result.Exception);
 
             Assert.Equal("Original", Store.Select("SELECT Name FROM Customer WHERE Id = '1'").Rows[0]["Name"]);
             Assert.Equal(DataRowState.Modified, Updated.RowState);
@@ -920,7 +990,7 @@ public class TableSetTests
         DataRow Row = List.Rows.Add("1");
         TableSet Set = new(Store, List, new MemTable("Item"));
 
-        Assert.Throws<InvalidOperationException>(() => Set.ListSave());
+        Assert.IsType<InvalidOperationException>(Set.ListSave().Exception);
 
         Assert.Equal(DataRowState.Added, Row.RowState);
     }
@@ -949,7 +1019,7 @@ public class TableSetTests
             DataRow DetailRow = Detail.AddNewRow();
             TableSet Set = new(Store, List, new MemTable("Item"));
 
-            Set.ListSave();
+            Assert.Equal(TableSetResultStatus.Success, Set.ListSave().Status);
 
             Assert.Equal("Greece", Store.Select("SELECT Name FROM Country WHERE Id = 'GR'").Rows[0]["Name"]);
             Assert.Equal(DataRowState.Unchanged, Country.RowState);
@@ -986,7 +1056,7 @@ public class TableSetTests
             List.Rows.Add("GR", "Greece");
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Set.ListSave();
+            Assert.Equal(TableSetResultStatus.Success, Set.ListSave().Status);
 
             Assert.Same(CountryMetadata, Schema.Tables.Single(Table => Table.Name == "Country"));
             Assert.DoesNotContain(Schema.Tables, Table => Table.Name == "AddedAfterSchemaLoad");
@@ -1025,7 +1095,7 @@ public class TableSetTests
                 Row["Name"] = "Changed";
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Assert.Throws<InvalidOperationException>(() => Set.ListSave());
+            Assert.IsType<InvalidOperationException>(Set.ListSave().Exception);
 
             Assert.Equal(Delete ? DataRowState.Deleted : DataRowState.Modified, Row.RowState);
             Assert.Empty(Store.Select("SELECT * FROM Customer").Rows.Cast<DataRow>());
@@ -1061,7 +1131,7 @@ public class TableSetTests
             Modified["Name"] = "Changed";
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Assert.Throws<InvalidOperationException>(() => Set.ListSave());
+            Assert.IsType<InvalidOperationException>(Set.ListSave().Exception);
 
             Assert.Equal("Existing", Store.Select("SELECT Name FROM Customer WHERE Id = '1'").Rows[0]["Name"]);
             Assert.Equal(DataRowState.Deleted, Deleted.RowState);
@@ -1096,7 +1166,7 @@ public class TableSetTests
             Assert.True((int)Row["Id"] < 0);
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Set.ListSave();
+            Assert.Equal(TableSetResultStatus.Success, Set.ListSave().Status);
 
             Assert.Equal(1, Row["Id"]);
             Assert.Equal(DataRowState.Unchanged, Row.RowState);
@@ -1132,7 +1202,7 @@ public class TableSetTests
             Assert.Equal(-1L, Row["Id"]);
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Set.ListSave();
+            Assert.Equal(TableSetResultStatus.Success, Set.ListSave().Status);
 
             Assert.Equal(2147483648L, Row["Id"]);
             Assert.Equal(DataRowState.Unchanged, Row.RowState);
@@ -1167,7 +1237,7 @@ public class TableSetTests
             Row["Name"] = "New";
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Assert.Throws<OverflowException>(() => Set.ListSave());
+            Assert.IsType<OverflowException>(Set.ListSave().Exception);
 
             Assert.Equal(-1, Row["Id"]);
             Assert.Equal(DataRowState.Added, Row.RowState);
@@ -1208,7 +1278,7 @@ public class TableSetTests
             Assert.True((int)SecondId < 0);
             TableSet Set = new(Store, List, new MemTable("Item"), TableSetFlags.GenerateSql);
 
-            Assert.Throws<SqliteException>(() => Set.ListSave());
+            Assert.IsType<SqliteException>(Set.ListSave().Exception);
 
             Assert.Equal(FirstId, First["Id"]);
             Assert.Equal(SecondId, Second["Id"]);
@@ -1247,7 +1317,7 @@ public class TableSetTests
             object TemporaryId = Row["Id"];
             TableSet Set = new(Store, List, new MemTable("Item"));
 
-            Assert.Throws<InvalidOperationException>(() => Set.ListSave());
+            Assert.IsType<InvalidOperationException>(Set.ListSave().Exception);
 
             Assert.Equal(TemporaryId, Row["Id"]);
             Assert.Equal(DataRowState.Added, Row.RowState);

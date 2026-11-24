@@ -17,6 +17,7 @@ public class FieldDef : BaseDef
     DataFieldType fDataType = DataFieldType.String;
     int fMaxLength;
     FieldFlags fFlags;
+    string fDefaultValue;
 
     // ● public
     /// <summary>
@@ -61,6 +62,21 @@ public class FieldDef : BaseDef
                 return;
             fMaxLength = value;
             NotifyPropertyChanged(nameof(MaxLength));
+        }
+    }
+    /// <summary>
+    /// Gets or sets a literal default value. Null means no default; an empty string
+    /// represents an empty string value. Blob fields do not support defaults.
+    /// </summary>
+    public string DefaultValue
+    {
+        get => fDefaultValue;
+        set
+        {
+            if (fDefaultValue == value)
+                return;
+            fDefaultValue = value;
+            NotifyPropertyChanged(nameof(DefaultValue));
         }
     }
     /// <summary>
