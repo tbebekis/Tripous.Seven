@@ -734,6 +734,59 @@ public class TableSetTests
         }
     }
     /// <summary>
+    /// Delete order follows the cascade flag for item delete and commit.
+    /// </summary>
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public void DeleteOrderFollowsCascadeFlag(bool CascadeDeletes, bool DeleteItem)
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-delete-order-{Guid.NewGuid():N}.db");
+        try
+        {
+            SqlStore Store = new(new DbConnectionInfo { Name = "DeleteOrder", ConnectionString = $"Data Source={FilePath};Pooling=False;Foreign Keys=False" });
+            CreateIntegerTreeTables(Store);
+            Store.ExecSql("CREATE TRIGGER AuditItem AFTER DELETE ON Item BEGIN INSERT INTO Audit (Message) VALUES ('Item'); END");
+            Store.ExecSql("CREATE TRIGGER AuditDetail AFTER DELETE ON Detail BEGIN INSERT INTO Audit (Message) VALUES ('Detail'); END");
+            Store.ExecSql("CREATE TRIGGER AuditSubDetail AFTER DELETE ON SubDetail BEGIN INSERT INTO Audit (Message) VALUES ('SubDetail'); END");
+            Store.ExecSql("INSERT INTO Item VALUES (1, 'Item')");
+            Store.ExecSql("INSERT INTO Detail VALUES (11, 1, 'Detail')");
+            Store.ExecSql("INSERT INTO SubDetail VALUES (111, 11, 'Sub')");
+            var (Item, Detail, SubDetail) = CreateIntegerItemTree();
+            TableSetFlags Flags = CascadeDeletes ? TableSetFlags.None : TableSetFlags.NoCascadeDeletes;
+            TableSet Set = new(Store, new MemTable("List"), Item, Flags);
+            TableSetResult Result;
+            if (DeleteItem)
+            {
+                Result = Set.Delete(1);
+            }
+            else
+            {
+                Assert.Equal(TableSetResultStatus.Success, Set.Load(1).Status);
+                SubDetail.Rows[0].Delete();
+                Detail.Rows[0].Delete();
+                Result = Set.Commit(false);
+            }
+            Assert.Equal(TableSetResultStatus.Success, Result.Status);
+            string[] Actual = Store.Select("SELECT Message FROM Audit ORDER BY rowid").Rows.Cast<DataRow>().Select(Row => (string)Row["Message"]).ToArray();
+            string[] Expected = (CascadeDeletes, DeleteItem) switch
+            {
+                (true, true) => new[] { "SubDetail", "Detail", "Item" },
+                (false, true) => new[] { "Item", "Detail", "SubDetail" },
+                (true, false) => new[] { "SubDetail", "Detail" },
+                _ => new[] { "Detail", "SubDetail" },
+            };
+            Assert.Equal(Expected, Actual);
+        }
+        finally
+        {
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+    /// <summary>
     /// Deleting an item loads its tree and removes sub-details before masters.
     /// Delete stage handlers receive the item ID and the active transaction.
     /// </summary>

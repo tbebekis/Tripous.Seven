@@ -42,7 +42,8 @@ public enum TableSetResultStatus
     /// </summary>
     LoadFailed,
     /// <summary>
-    /// The database commit was not confirmed.
+    /// The database commit was not confirmed. Its outcome may be uncertain;
+    /// this value does not guarantee that the database was unchanged.
     /// </summary>
     CommitFailed,
     /// <summary>
@@ -51,6 +52,7 @@ public enum TableSetResultStatus
     DeleteFailed,
     /// <summary>
     /// The database commit succeeded, but subsequent work failed.
+    /// For a committed item, the result ID identifies the saved row when available.
     /// </summary>
     AfterCommitFailed,
 }

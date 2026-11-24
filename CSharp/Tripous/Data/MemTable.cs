@@ -576,6 +576,26 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
         return Select(CreateRelationFilter(MasterRow));
     }
     /// <summary>
+    /// Deletes all descendants of an active row, from the deepest details upward.
+    /// The supplied row is not deleted. This only changes the in-memory tree.
+    /// </summary>
+    public void DeleteDetailRows(DataRow MasterRow)
+    {
+        ArgumentNullException.ThrowIfNull(MasterRow);
+        if (!ReferenceEquals(MasterRow.Table, this) || MasterRow.RowState == DataRowState.Deleted || MasterRow.RowState == DataRowState.Detached)
+            throw new ArgumentException("The row must be an active row of this table.", nameof(MasterRow));
+        foreach (MemTable Detail in Details)
+        {
+            foreach (DataRow Row in Detail.GetChildRows(MasterRow))
+            {
+                if (Row.RowState == DataRowState.Deleted || Row.RowState == DataRowState.Detached)
+                    continue;
+                Detail.DeleteDetailRows(Row);
+                Row.Delete();
+            }
+        }
+    }
+    /// <summary>
     /// Returns this table and its details in master-first depth-first order.
     /// </summary>
     public List<MemTable> GetTreeAsFlatList()

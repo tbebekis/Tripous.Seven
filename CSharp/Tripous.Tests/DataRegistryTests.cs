@@ -11,6 +11,7 @@ namespace Tripous.Tests;
 /// <summary>
 /// Tests registration and retrieval of data module definitions.
 /// </summary>
+[Collection("Database registry")]
 public class DataRegistryTests
 {
     // ● public

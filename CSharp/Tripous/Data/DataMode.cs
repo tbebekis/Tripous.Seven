@@ -16,13 +16,13 @@ public enum DataMode
     /// <summary>
     /// No item is active.
     /// </summary>
-    None,
+    None = 0,
     /// <summary>
     /// A new item is being prepared.
     /// </summary>
-    Insert,
+    Insert = 2,
     /// <summary>
     /// An existing item is being edited.
     /// </summary>
-    Edit,
+    Edit = 4,
 }

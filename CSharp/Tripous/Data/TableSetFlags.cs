@@ -23,4 +23,9 @@ public enum TableSetFlags
     /// This is a quick alternative to statement generation from definitions.
     /// </summary>
     GenerateSql = 1,
+    /// <summary>
+    /// Posts deletes from top to bottom, allowing foreign key constraints to reject them.
+    /// Without this flag deletes are posted from the deepest details upward.
+    /// </summary>
+    NoCascadeDeletes = 4,
 }

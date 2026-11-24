@@ -11,6 +11,7 @@ namespace Tripous.Tests;
 /// <summary>
 /// Tests data module creation and initialization.
 /// </summary>
+[Collection("Database registry")]
 public class DataModuleTests
 {
     // ● public types
@@ -322,6 +323,16 @@ public class DataModuleTests
         Assert.False(Module.IsDeleting);
         Assert.Equal("Commit active", Assert.Throws<InvalidOperationException>(() => Module.Commit(false)).Message);
         Assert.False(Module.IsCommitting);
+    }
+    /// <summary>
+    /// Data mode values remain compatible with the remote client contract.
+    /// </summary>
+    [Fact]
+    public void DataModeUsesStableRemoteValues()
+    {
+        Assert.Equal(0, (int)DataMode.None);
+        Assert.Equal(2, (int)DataMode.Insert);
+        Assert.Equal(4, (int)DataMode.Edit);
     }
     /// <summary>
     /// Insert prepares defaults, exposes the new state to the after hook and protects changes.
@@ -738,6 +749,37 @@ public class DataModuleTests
         }
     }
     /// <summary>
+    /// A module with cascade deletes disabled lets foreign keys reject top-down deletion.
+    /// </summary>
+    [Fact]
+    public void CascadeDeletesSettingControlsItemDeletion()
+    {
+        string ConnectionName = $"Connection_{Guid.NewGuid():N}";
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-module-cascade-{Guid.NewGuid():N}.db");
+        ModuleDef Definition = CreateDefinition("CustomerModule", ConnectionName);
+        Assert.True(Definition.CascadeDeletes);
+        Definition.CascadeDeletes = false;
+        try
+        {
+            Db.Connections.Add(new DbConnectionInfo { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False;Foreign Keys=True" });
+            DataModule Module = Definition.Create();
+            Module.Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT)");
+            Module.Store.ExecSql("CREATE TABLE Address (Id TEXT PRIMARY KEY, CustomerId TEXT REFERENCES Customer(Id), City TEXT)");
+            Module.Store.ExecSql("INSERT INTO Customer VALUES ('C1', 'Theo')");
+            Module.Store.ExecSql("INSERT INTO Address VALUES ('A1', 'C1', 'Athens')");
+            Assert.False(new JsonDataModule(Module).CascadeDeletes);
+            Assert.Throws<SqliteException>(() => Module.Delete("C1"));
+            Assert.Equal(1L, Module.Store.Select("SELECT COUNT(*) FROM Customer").Rows[0][0]);
+            Assert.Equal(1L, Module.Store.Select("SELECT COUNT(*) FROM Address").Rows[0][0]);
+        }
+        finally
+        {
+            Db.Connections.Remove(ConnectionName);
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+    /// <summary>
     /// List cancellation rejects edits without changing the item table.
     /// </summary>
     [Fact]
@@ -851,9 +893,12 @@ public class DataModuleTests
             Tables.ProcessEmpty();
             Assert.Equal(TableSetResultStatus.Success, Tables.Load(Id).Status);
             Assert.Equal("Athens", Assert.Single(Module.Tables.Get("Address").Rows.Cast<DataRow>())["City"]);
+            MemTable OriginalListTable = Module.ListTable;
             Assert.Equal(1, Module.ListSelect(DefaultSelect));
+            Assert.Same(OriginalListTable, Module.ListTable);
             Assert.Equal(Id, Assert.Single(Module.ListTable.Rows.Cast<DataRow>())["Id"]);
             Assert.Equal(1, Module.ListSelect("SELECT Id, Name FROM Customer WHERE Name = 'Theo'"));
+            Assert.Same(OriginalListTable, Module.ListTable);
             Assert.Equal("Theo", Assert.Single(Module.ListTable.Rows.Cast<DataRow>())["Name"]);
         }
         finally

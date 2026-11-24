@@ -70,6 +70,13 @@ public class TableSet
     /// </summary>
     static bool IsIntegerType(Type Type) => Type == typeof(int) || Type == typeof(long);
     /// <summary>
+    /// Returns tables in the configured delete order.
+    /// </summary>
+    IEnumerable<MemTable> GetDeleteOrder(IEnumerable<MemTable> Tables)
+        => (fFlags & TableSetFlags.NoCascadeDeletes) != 0
+            ? Tables.OrderBy(Table => Table.Level)
+            : Tables.OrderByDescending(Table => Table.Level);
+    /// <summary>
     /// Posts deleted rows of one table using their original values.
     /// The caller owns the transaction and controls the order of tables.
     /// </summary>
@@ -450,7 +457,7 @@ public class TableSet
                         NotifyTransactionStageDelete(Transaction, TransactionStage.Post, ExecTime.Before, RowId);
                         List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
                         CheckItemSaveTables(Tables);
-                        foreach (MemTable Table in Tables.OrderByDescending(Item => Item.Level))
+                        foreach (MemTable Table in GetDeleteOrder(Tables))
                             PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
                         NotifyTransactionStageDelete(Transaction, TransactionStage.Post, ExecTime.After, RowId);
                         NotifyTransactionStageDelete(Transaction, TransactionStage.Commit, ExecTime.Before, RowId);
@@ -534,7 +541,7 @@ public class TableSet
                         NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.Before);
                         List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
                         CheckItemSaveTables(Tables);
-                        foreach (MemTable Table in Tables.OrderByDescending(Item => Item.Level))
+                        foreach (MemTable Table in GetDeleteOrder(Tables))
                             PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
                         foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
                             PostUpdates(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified).ToArray());

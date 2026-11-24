@@ -19,6 +19,7 @@ public class ModuleDef : BaseDef
     string fClassName;
     SelectDefs fSelectList;
     SelectDefs fStocks;
+    bool fCascadeDeletes = true;
 
     // ● public
     /// <summary>
@@ -88,6 +89,22 @@ public class ModuleDef : BaseDef
                 return;
             fStocks = value;
             NotifyPropertyChanged(nameof(Stocks));
+        }
+    }
+    /// <summary>
+    /// Gets or sets whether deletes are posted from details toward the top table.
+    /// When false, deletes are posted from the top down and constraints can reject them.
+    /// This setting does not indicate database ON DELETE CASCADE behavior.
+    /// </summary>
+    public bool CascadeDeletes
+    {
+        get => fCascadeDeletes;
+        set
+        {
+            if (fCascadeDeletes == value)
+                return;
+            fCascadeDeletes = value;
+            NotifyPropertyChanged(nameof(CascadeDeletes));
         }
     }
     /// <summary>
