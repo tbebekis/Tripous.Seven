@@ -6,7 +6,7 @@
  * See LICENSE for details.
  */
 
-namespace Tripous.ServerSide;
+namespace Tripous.RemoteOps;
 
 /// <summary>
 /// Registers remote operation types and dispatches requests to new instances.

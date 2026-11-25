@@ -28,7 +28,7 @@ public class DataModuleEditTests
         {
             Db.Connections.Add(new DbConnectionInfo { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" });
             SqlStore Store = SqlStores.CreateSqlStore(ConnectionName);
-            RemoteOperations.Register(typeof(DataModuleEdit));
+            RemOp.Initialize();
             foreach ((string TableName, DataFieldType KeyType, string Id, string SqlId) in new[]
             {
                 ("StringItem", DataFieldType.String, "C1", "'C1'"),

@@ -31,8 +31,7 @@ public class DataModuleInitializeInsertTests
         {
             Db.Connections.Add(new DbConnectionInfo { Name = ConnectionName, ConnectionString = "Data Source=:memory:" });
             DataRegistry.Modules.Add(Definition);
-            RemoteOperations.Register(typeof(DataModuleInitialize));
-            RemoteOperations.Register(typeof(DataModuleInsert));
+            RemOp.Initialize();
             RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.Initialize" };
             Request.Params["ModuleName"] = ModuleName;
             RemoteResponse InitialResponse = RemoteOperations.Execute(Request);

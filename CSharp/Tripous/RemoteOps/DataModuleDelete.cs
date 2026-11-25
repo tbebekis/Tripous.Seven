@@ -6,7 +6,7 @@
  * See LICENSE for details.
  */
 
-namespace Tripous.ServerSide;
+namespace Tripous.RemoteOps;
 
 /// <summary>
 /// Deletes an item from a registered data module for a remote client.

@@ -6,7 +6,7 @@
  * See LICENSE for details.
  */
 
-namespace Tripous.ServerSide;
+namespace Tripous.RemoteOps;
 
 /// <summary>
 /// Identifies the kind of client making a remote request.

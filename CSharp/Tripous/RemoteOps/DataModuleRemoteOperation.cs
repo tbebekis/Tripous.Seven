@@ -6,7 +6,7 @@
  * See LICENSE for details.
  */
 
-namespace Tripous.ServerSide;
+namespace Tripous.RemoteOps;
 
 /// <summary>
 /// Base class for remote operations on registered data modules.

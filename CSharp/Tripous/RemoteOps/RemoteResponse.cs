@@ -6,7 +6,7 @@
  * See LICENSE for details.
  */
 
-namespace Tripous.ServerSide;
+namespace Tripous.RemoteOps;
 
 /// <summary>
 /// Holds named results returned by a remote operation.

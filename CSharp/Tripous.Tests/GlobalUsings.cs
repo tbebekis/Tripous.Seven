@@ -11,4 +11,4 @@ global using Tripous.Data;
 global using System.Data;
 global using System.Data.Common;
 global using Microsoft.Data.Sqlite;
-global using Tripous.ServerSide;
+global using Tripous.RemoteOps;

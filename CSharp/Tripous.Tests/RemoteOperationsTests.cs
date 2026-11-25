@@ -11,6 +11,7 @@ namespace Tripous.Tests;
 /// <summary>
 /// Tests registration and dispatch of remote operation types.
 /// </summary>
+[Collection("Database registry")]
 public class RemoteOperationsTests
 {
     // ● public types
@@ -67,6 +68,25 @@ public class RemoteOperationsTests
     }
 
     // ● public
+    /// <summary>
+    /// Initialization registers the built-in operations once and enables Ping.
+    /// </summary>
+    [Fact]
+    public void InitializeAndPing()
+    {
+        RemOp.Initialize();
+        RemOp.Initialize();
+        Assert.Same(typeof(Ping), RemoteOperations.Get("Ping"));
+        Assert.Same(typeof(DataModuleInitialize), RemoteOperations.Get("DataModule.Initialize"));
+        Assert.Same(typeof(DataModuleInsert), RemoteOperations.Get("DataModule.Insert"));
+        Assert.Same(typeof(DataModuleEdit), RemoteOperations.Get("DataModule.Edit"));
+        Assert.Same(typeof(DataModuleDelete), RemoteOperations.Get("DataModule.Delete"));
+        Assert.Same(typeof(DataModuleSelectList), RemoteOperations.Get("DataModule.SelectList"));
+        Assert.Same(typeof(DataModuleCommit), RemoteOperations.Get("DataModule.Commit"));
+        RemoteResponse Response = RemoteOperations.Execute(new RemoteRequest { Id = Guid.NewGuid().ToString(), OperationName = "Ping" });
+        Assert.True(Response.IsSuccess, Response.ErrorText);
+        Assert.False(RemoteOperations.Execute(new RemoteRequest { OperationName = "Ping" }).IsSuccess);
+    }
     /// <summary>
     /// Registration uses case-insensitive names and execution creates a fresh operation.
     /// </summary>

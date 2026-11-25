@@ -39,7 +39,7 @@ public class DataModuleSelectListTests
             Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT)");
             Store.ExecSql("INSERT INTO Customer VALUES ('C1', 'Alice'), ('C2', 'Zoe')");
             DbConfig.DefaultRowLimit = 1;
-            RemoteOperations.Register(typeof(DataModuleSelectList));
+            RemOp.Initialize();
             RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.SelectList" };
             Request.Params["ModuleName"] = ModuleName;
             Request.Params["Filters"] = Array.Empty<object>();

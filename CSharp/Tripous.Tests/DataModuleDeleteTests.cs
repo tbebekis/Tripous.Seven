@@ -35,7 +35,7 @@ public class DataModuleDeleteTests
             SqlStore Store = SqlStores.CreateSqlStore(ConnectionName);
             Store.ExecSql("CREATE TABLE Customer (Id INTEGER PRIMARY KEY, Name TEXT)");
             Store.ExecSql("INSERT INTO Customer VALUES (100, 'Theo')");
-            RemoteOperations.Register(typeof(DataModuleDelete));
+            RemOp.Initialize();
             RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.Delete" };
             Request.Params["ModuleName"] = ModuleName;
             Request.Params["Id"] = 100;

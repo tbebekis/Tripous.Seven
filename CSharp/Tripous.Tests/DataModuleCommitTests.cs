@@ -73,7 +73,7 @@ public class DataModuleCommitTests
             Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT NOT NULL)");
             Store.ExecSql("CREATE TABLE Address (Id TEXT PRIMARY KEY, CustomerId TEXT NOT NULL REFERENCES Customer(Id), City TEXT NOT NULL)");
             Store.ExecSql("CREATE TABLE AddressNote (Id TEXT PRIMARY KEY, AddressId TEXT NOT NULL REFERENCES Address(Id), Text TEXT NOT NULL)");
-            RemoteOperations.Register(typeof(DataModuleCommit));
+            RemOp.Initialize();
 
             DataModule Input = Definition.Create();
             Input.Insert();
