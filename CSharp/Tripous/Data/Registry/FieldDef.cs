@@ -19,6 +19,52 @@ public class FieldDef : BaseDef
     FieldFlags fFlags;
     string fDefaultValue;
 
+    // ● internal
+    internal object ParseDefaultValue()
+    {
+        string Value = DefaultValue;
+        try
+        {
+            var Culture = System.Globalization.CultureInfo.InvariantCulture;
+            var IntegerStyle = System.Globalization.NumberStyles.AllowLeadingSign;
+            var NumberStyle = IntegerStyle | System.Globalization.NumberStyles.AllowDecimalPoint;
+            switch (DataType)
+            {
+                case DataFieldType.String:
+                case DataFieldType.TextBlob:
+                    return Value;
+                case DataFieldType.Integer:
+                    return int.Parse(Value, IntegerStyle, Culture);
+                case DataFieldType.Int64:
+                    return long.Parse(Value, IntegerStyle, Culture);
+                case DataFieldType.Double:
+                    double Number = double.Parse(Value, NumberStyle, Culture);
+                    if (!double.IsFinite(Number))
+                        throw new FormatException("A finite number is required.");
+                    return Number;
+                case DataFieldType.Decimal:
+                case DataFieldType.Decimal_:
+                    return decimal.Parse(Value, NumberStyle, Culture);
+                case DataFieldType.Boolean:
+                    if (string.Equals(Value, "true", StringComparison.OrdinalIgnoreCase)) return 1;
+                    if (string.Equals(Value, "false", StringComparison.OrdinalIgnoreCase)) return 0;
+                    throw new FormatException("Expected true or false.");
+                case DataFieldType.Date:
+                    return DateTime.ParseExact(Value, "yyyy-MM-dd", Culture, System.Globalization.DateTimeStyles.None);
+                case DataFieldType.DateTime:
+                    return DateTime.ParseExact(Value, new[] { "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF" }, Culture, System.Globalization.DateTimeStyles.None);
+                case DataFieldType.Blob:
+                    throw new NotSupportedException("Blob defaults are not supported.");
+                default:
+                    throw new NotSupportedException("The field type does not support defaults.");
+            }
+        }
+        catch (Exception Error) when (Error is FormatException or OverflowException or NotSupportedException)
+        {
+            throw new InvalidOperationException($"Invalid default for field '{Name}'.", Error);
+        }
+    }
+
     // ● public
     /// <summary>
     /// Checks the descriptor name and requires a field data type.
@@ -26,8 +72,16 @@ public class FieldDef : BaseDef
     public override void CheckDescriptor()
     {
         base.CheckDescriptor();
-        if (DataType == DataFieldType.None)
-            throw new InvalidOperationException(Texts.GS($"E_{GetType()}_DataTypeIsEmpty", "Field data type is required."));
+        if (!Enum.IsDefined(DataType) || DataType == DataFieldType.None)
+            throw new InvalidOperationException(Texts.GS($"E_{GetType()}_DataTypeIsEmpty", "A valid field data type is required."));
+        if (IsNativeField)
+        {
+            DataTableDef.ValidateIdentifier(Name);
+            if (Name.Any(Ch => !(char.IsLetterOrDigit(Ch) || Ch == '_')))
+                throw new InvalidOperationException($"Field '{Name}' cannot be used as a SQL parameter name.");
+        }
+        if (DefaultValue != null)
+            ParseDefaultValue();
     }
 
     // ● properties

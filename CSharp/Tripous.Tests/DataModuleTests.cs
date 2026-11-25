@@ -831,6 +831,8 @@ public class DataModuleTests
             Assert.Equal(Limit, Module.ListTable.Rows.Count);
             Assert.Equal("1", Module.ListTable.Rows[0]["Id"]);
             Assert.Equal(Limit, Module.ListSelect(Definition.SelectList.Get("DEFAULT")));
+            Assert.Equal(1, Module.ListSelect($"select Id, Name from Customer where Id = {SqlProvider.GlobalPrefix}Id", new SqlParams().Add("Id", "2")));
+            Assert.Equal("2", Module.ListTable.Rows[0]["Id"]);
             Assert.Throws<InvalidOperationException>(() => Module.ListSelect("select Id, Name from Customer limit 1"));
         }
         finally

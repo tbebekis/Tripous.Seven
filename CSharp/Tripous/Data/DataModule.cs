@@ -19,6 +19,9 @@ public class DataModule
     int fEditing;
     int fDeleting;
     int fCommitting;
+    DataRow fGeneratedCodeRow;
+    DataColumn fGeneratedCodeColumn;
+    object fGeneratedCodePreviousValue;
 
     // ● private
     void Table_RowDeleting(object Sender, DataRowChangeEventArgs Args)
@@ -28,12 +31,63 @@ public class DataModule
             Table.DeleteDetailRows(Args.Row);
         RowDeleting(Table, Args);
     }
+    void HandleTransactionStageCommit(object Sender, TransactionEventArgs Args)
+    {
+        if (Args.Stage == TransactionStage.Start && Args.ExecTime == ExecTime.Before && fGeneratedCodeRow != null)
+        {
+            if (fGeneratedCodeRow.RowState == DataRowState.Detached || ItemTable.Rows.IndexOf(fGeneratedCodeRow) < 0)
+            {
+                fGeneratedCodeRow = null;
+                fGeneratedCodeColumn = null;
+                fGeneratedCodePreviousValue = null;
+            }
+            else
+                throw new InvalidOperationException("The outcome of the previous generated code reservation is unknown; reload the item before retrying.");
+        }
+        if (Args.Stage == TransactionStage.Post && Args.ExecTime == ExecTime.Before)
+            AssignCodeValue(Args.Transaction);
+        if (Args.Stage == TransactionStage.Rollback && Args.ExecTime == ExecTime.After && fGeneratedCodeRow != null)
+        {
+            fGeneratedCodeRow[fGeneratedCodeColumn] = fGeneratedCodePreviousValue;
+            fGeneratedCodeRow = null;
+            fGeneratedCodeColumn = null;
+            fGeneratedCodePreviousValue = null;
+        }
+        if (Args.Stage == TransactionStage.Commit && Args.ExecTime == ExecTime.After)
+        {
+            fGeneratedCodeRow = null;
+            fGeneratedCodeColumn = null;
+            fGeneratedCodePreviousValue = null;
+        }
+        TableSet_TransactionStageCommit(Sender, Args);
+    }
 
     // ● protected fields
     /// <summary>
     /// The table operations used by this module.
     /// </summary>
     protected TableSet TableSet;
+
+    // ● code provider
+    /// <summary>
+    /// Assigns a registered code provider's value to a new item with an empty code field.
+    /// The series update uses the commit transaction.
+    /// </summary>
+    protected virtual void AssignCodeValue(DbTransaction Transaction)
+    {
+        if (string.IsNullOrWhiteSpace(ModuleDef.CodeProvider) || ItemTable.Rows.Count != 1)
+            return;
+        DataRow Row = ItemTable.Rows[0];
+        DataColumn Column = ItemTable.Columns[ModuleDef.CodeFieldName] ?? throw new InvalidOperationException($"Code field '{ModuleDef.CodeFieldName}' was not found.");
+        if (Row.RowState != DataRowState.Added || !string.IsNullOrWhiteSpace(Convert.ToString(Row[Column])))
+            return;
+        CodeProviderDef Provider = DataRegistry.CodeProviders.Get(ModuleDef.CodeProvider);
+        string Code = new CodeProviderStore().GetNextCode(Store, Transaction, Provider.Name, DateTime.Today);
+        fGeneratedCodeRow = Row;
+        fGeneratedCodeColumn = Column;
+        fGeneratedCodePreviousValue = Row[Column];
+        Row[Column] = Code;
+    }
 
     // ● transaction event handlers
     /// <summary>
@@ -169,8 +223,9 @@ public class DataModule
         if (ModuleDef != null)
             throw new InvalidOperationException("The data module is already initialized.");
         ArgumentNullException.ThrowIfNull(Definition);
-        if (Definition.Table == null)
-            throw new InvalidOperationException("The data module requires a top table definition.");
+        Definition.CheckDescriptor();
+        if (!string.IsNullOrWhiteSpace(Definition.RowVersionFieldName))
+            throw new NotSupportedException("Row version commits are not implemented yet.");
 
         SqlStore NewStore = SqlStores.CreateSqlStore(Definition.ConnectionName);
         TableList NewTables = new();
@@ -226,7 +281,7 @@ public class DataModule
         }
         TableSetFlags Flags = Definition.CascadeDeletes ? TableSetFlags.None : TableSetFlags.NoCascadeDeletes;
         TableSet NewTableSet = new(NewStore, NewListTable, NewItemTable, Flags);
-        NewTableSet.TransactionStageCommit += TableSet_TransactionStageCommit;
+        NewTableSet.TransactionStageCommit += HandleTransactionStageCommit;
         NewTableSet.TransactionStageDelete += TableSet_TransactionStageDelete;
 
         if (Definition.SelectList.Count == 0)
@@ -258,7 +313,12 @@ public class DataModule
     /// Selects the list using the supplied SQL statement. The framework applies
     /// the row limit; the caller must not include a limit in the list SELECT.
     /// </summary>
-    public virtual int ListSelect(string SqlText)
+    public virtual int ListSelect(string SqlText) => ListSelect(SqlText, new SqlParams());
+    /// <summary>
+    /// Selects the list using the supplied SQL statement and parameters.
+    /// The framework applies the row limit.
+    /// </summary>
+    public virtual int ListSelect(string SqlText, SqlParams Params)
     {
         LastTableSetResult = null;
         if (string.IsNullOrWhiteSpace(SqlText))
@@ -266,7 +326,7 @@ public class DataModule
         int RowLimit = DbConfig.DefaultRowLimit;
         if (RowLimit <= 0)
             throw new InvalidOperationException("The data module list row limit must be positive.");
-        TableSetResult Result = TableSet.ListSelect(Store.ApplyRowLimit(SqlText, RowLimit));
+        TableSetResult Result = TableSet.ListSelect(Store.ApplyRowLimit(SqlText, RowLimit), Params);
         LastTableSetResult = Result;
         if (Result.Exception != null)
             ExceptionDispatchInfo.Capture(Result.Exception).Throw();
@@ -464,6 +524,101 @@ public class DataModule
         return ModuleDef.SelectList[0];
     }
 
+    // ● protected JSON filter operations
+    /// <summary>
+    /// Converts an active filter value using its registered data type.
+    /// Boolean values use integer database representation.
+    /// </summary>
+    protected virtual object ConvertSelectFilterValue(object Value, DataFieldType DataType)
+    {
+        if (Value == null || Value == DBNull.Value)
+            return null;
+        if (Value is JsonElement Element)
+        {
+            if (Element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                return null;
+            Value = Element.ValueKind == JsonValueKind.String ? Element.GetString() : Element.ToString();
+        }
+        var Culture = System.Globalization.CultureInfo.InvariantCulture;
+        return DataType switch
+        {
+            DataFieldType.String => Convert.ToString(Value, Culture),
+            DataFieldType.Integer => Convert.ToInt32(Value, Culture),
+            DataFieldType.Int64 => Convert.ToInt64(Value, Culture),
+            DataFieldType.Decimal or DataFieldType.Decimal_ => Convert.ToDecimal(Value, Culture),
+            DataFieldType.Double => Convert.ToDouble(Value, Culture),
+            DataFieldType.Boolean => bool.TryParse(Convert.ToString(Value, Culture), out bool Flag) ? (Flag ? 1 : 0) : (Convert.ToInt32(Value, Culture) != 0 ? 1 : 0),
+            DataFieldType.Date or DataFieldType.DateTime => Convert.ToDateTime(Value, Culture),
+            _ => throw new InvalidOperationException($"Unsupported filter data type: {DataType}"),
+        };
+    }
+    /// <summary>
+    /// Returns the condition operators allowed for a filter data type.
+    /// </summary>
+    protected virtual ConditionOp[] GetFilterConditionOps(DataFieldType DataType)
+    {
+        return DataType switch
+        {
+            DataFieldType.Boolean => new[] { ConditionOp.Equal },
+            DataFieldType.String => new[] { ConditionOp.Equal, ConditionOp.Contains, ConditionOp.StartsWith, ConditionOp.EndsWith },
+            DataFieldType.Integer or DataFieldType.Int64 or DataFieldType.Decimal or DataFieldType.Decimal_ or DataFieldType.Double or DataFieldType.Date or DataFieldType.DateTime => new[] { ConditionOp.Equal, ConditionOp.GreaterOrEqual, ConditionOp.LessOrEqual, ConditionOp.Between },
+            _ => Array.Empty<ConditionOp>(),
+        };
+    }
+    /// <summary>
+    /// Validates and creates one active filter, or returns null when its values are incomplete.
+    /// </summary>
+    protected virtual SqlFilterDef CreateSelectFilter(SelectDef Select, JsonSelectFilter Filter)
+    {
+        if (Filter == null || string.IsNullOrWhiteSpace(Filter.Name))
+            throw new InvalidOperationException("A filter name is required.");
+        if (!string.IsNullOrWhiteSpace(Filter.SelectName) && !string.Equals(Filter.SelectName, Select.Name, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Filter SELECT does not match '{Select.Name}'.");
+        SqlFilterDef Source = Select.FilterDefs.Find(Filter.Name) ?? throw new InvalidOperationException($"Filter '{Filter.Name}' is not defined for SELECT '{Select.Name}'.");
+        BoolOp BoolOp = BoolOp.And;
+        if (!string.IsNullOrWhiteSpace(Filter.BoolOp) && !Enum.TryParse(Filter.BoolOp, true, out BoolOp))
+            throw new InvalidOperationException($"Invalid filter boolean operator: {Filter.BoolOp}");
+        if (BoolOp != BoolOp.And && BoolOp != BoolOp.Or)
+            throw new InvalidOperationException($"Unsupported filter boolean operator: {BoolOp}");
+        ConditionOp ConditionOp = Source.ConditionOp;
+        if (!string.IsNullOrWhiteSpace(Filter.ConditionOp) && !Enum.TryParse(Filter.ConditionOp, true, out ConditionOp))
+            throw new InvalidOperationException($"Invalid filter condition operator: {Filter.ConditionOp}");
+        if (!GetFilterConditionOps(Source.FilterDataType).Contains(ConditionOp))
+            throw new InvalidOperationException($"Unsupported condition operator {ConditionOp} for filter '{Source.Name}'.");
+        object Value = ConvertSelectFilterValue(Filter.Value, Source.FilterDataType);
+        object Value2 = ConditionOp == ConditionOp.Between ? ConvertSelectFilterValue(Filter.Value2, Source.FilterDataType) : null;
+        if (Value == null || (ConditionOp == ConditionOp.Between && Value2 == null))
+            return null;
+        return new SqlFilterDef
+        {
+            Name = Source.Name,
+            FieldName = Source.FieldName,
+            FilterDataType = Source.FilterDataType,
+            BoolOp = BoolOp,
+            ConditionOp = ConditionOp,
+            TitleKey = Source.TitleKey,
+            Value = Value,
+            Value2 = Value2,
+        };
+    }
+    /// <summary>
+    /// Validates active filters against a SELECT's registered filter definitions.
+    /// </summary>
+    protected virtual SqlFilterDefs CreateSelectFilters(SelectDef Select, JsonSelectFilters Filters)
+    {
+        SqlFilterDefs Result = new() { AllowDuplicateNames = true };
+        if (Filters != null)
+        {
+            foreach (JsonSelectFilter Filter in Filters)
+            {
+                SqlFilterDef Active = CreateSelectFilter(Select, Filter);
+                if (Active != null)
+                    Result.Add(Active);
+            }
+        }
+        return Result;
+    }
+
     // ● JSON operations
     /// <summary>
     /// Returns the initialized module as a JSON packet.
@@ -482,13 +637,29 @@ public class DataModule
     /// An empty name selects the first registered SELECT.
     /// </summary>
     public virtual JsonDataTable JsonSelectList(string SelectName, out string SelectedName)
+        => JsonSelectList(SelectName, null, out SelectedName);
+    /// <summary>
+    /// Executes a named list SELECT with validated active filters.
+    /// </summary>
+    public virtual JsonDataTable JsonSelectList(string SelectName, JsonSelectFilters Filters, out string SelectedName)
     {
         LastTableSetResult = null;
         SelectDef Select = GetListSelectDef(SelectName);
         SelectedName = Select.Name;
         if (string.IsNullOrWhiteSpace(Select.SqlText))
             throw new InvalidOperationException($"List SELECT '{SelectedName}' has no SQL statement.");
-        ListSelect(Select);
+        SqlFilterDefs ActiveFilters = CreateSelectFilters(Select, Filters);
+        if (ActiveFilters.Count == 0)
+            ListSelect(Select);
+        else
+        {
+            // Validate the original statement before it becomes a nested query.
+            Store.ApplyRowLimit(Select.SqlText, DbConfig.DefaultRowLimit);
+            SqlParams Params = new();
+            string Where = SqlWhereFilterFormatter.FormatParameterized(ActiveFilters, Params, Select.SqlText);
+            string InnerSql = SqlTextScanner.PrepareSubquery(Select.SqlText);
+            ListSelect($"select * from ({InnerSql}) X where {Where}", Params);
+        }
         return new JsonDataTable(ListTable);
     }
     /// <summary>

@@ -11,9 +11,85 @@ namespace Tripous.Tests;
 /// <summary>
 /// Tests creation of portable SQL from table and field definitions.
 /// </summary>
+[Collection("Database registry")]
 public class DataTableDefTests
 {
     // ● public
+    /// <summary>
+    /// JSON preserves implicit and explicit key types and populates table child collections.
+    /// </summary>
+    [Fact]
+    public void SchemaDefinitionsRoundTripThroughJson()
+    {
+        DataFieldType Original = DbConfig.DefaultPrimaryKeyType;
+        try
+        {
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.String;
+            DataTableDef Table = new() { Name = "Customer" };
+            Table.AddId();
+            Table.AddField("ExplicitId", DataFieldType.Integer);
+            Table.AddUniqueConstraint("ExplicitId");
+            string JsonText = Json.Serialize(Table);
+            DataTableDef Loaded = Json.Deserialize<DataTableDef>(JsonText);
+            Assert.Equal(2, Loaded.Fields.Count);
+            Assert.Single(Loaded.UniqueConstraints);
+            Assert.Equal(DataFieldType.String, Loaded.Fields[0].DataType);
+            Assert.Equal(DataFieldType.Integer, Loaded.Fields[1].DataType);
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.Int64;
+            Assert.Equal(DataFieldType.Int64, Loaded.Fields[0].DataType);
+            Assert.Equal(DataFieldType.Integer, Loaded.Fields[1].DataType);
+            DataFieldDef Populated = new() { Name = "Old", DataType = DataFieldType.Integer };
+            Json.PopulateObject(Populated, Json.Serialize(Table.Fields[0]));
+            Assert.Equal(DataFieldType.Int64, Populated.DataType);
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.String;
+            Assert.Equal(DataFieldType.String, Populated.DataType);
+        }
+        finally
+        {
+            DbConfig.DefaultPrimaryKeyType = Original;
+        }
+    }
+    /// <summary>
+    /// Schema descriptors clone and assign independently without fixing an implicit key type.
+    /// </summary>
+    [Fact]
+    public void SchemaDescriptorsCloneAndAssign()
+    {
+        DataFieldType Original = DbConfig.DefaultPrimaryKeyType;
+        try
+        {
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.String;
+            DataTableDef Table = new() { Name = "Customer", TitleKey = "Customers" };
+            Table.AddId();
+            Table.AddString("Code", 40);
+            Table.AddUniqueConstraint("Code");
+            IDef Descriptor = Table;
+            DataTableDef Copy = Assert.IsType<DataTableDef>(Descriptor.Clone());
+            Assert.Equal("Customers", Copy.TitleKey);
+            Assert.Equal("", Copy.UniqueConstraints[0].Name);
+            Copy.CheckDescriptor();
+            Assert.NotSame(Table.Fields[0], Copy.Fields[0]);
+            Assert.NotSame(Table.UniqueConstraints[0], Copy.UniqueConstraints[0]);
+            Copy.Fields[1].Name = "Other";
+            Assert.Equal("Code", Table.Fields[1].Name);
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.Int64;
+            Assert.Equal(DataFieldType.Int64, Copy.Fields[0].DataType);
+            DataFieldDef Assigned = new() { Name = "Previous", DataType = DataFieldType.Integer };
+            Assigned.Assign(Table.Fields[0]);
+            Assert.Equal(DataFieldType.Int64, Assigned.DataType);
+            DbConfig.DefaultPrimaryKeyType = DataFieldType.String;
+            Assert.Equal(DataFieldType.String, Assigned.DataType);
+            Copy.Clear();
+            Assert.Empty(Copy.Fields);
+            Assert.Empty(Copy.UniqueConstraints);
+            Assert.Equal("", Copy.Name);
+            Assert.Equal(2, Table.Fields.Count);
+        }
+        finally
+        {
+            DbConfig.DefaultPrimaryKeyType = Original;
+        }
+    }
     /// <summary>
     /// SQLite stores Int64 values and generates primary keys beyond Int32.
     /// </summary>

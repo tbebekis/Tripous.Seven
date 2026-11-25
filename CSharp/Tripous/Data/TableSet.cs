@@ -291,7 +291,11 @@ public class TableSet
     /// Replaces the list table contents using the supplied or configured SELECT.
     /// Returns the row count on success or the reason the SELECT did not complete.
     /// </summary>
-    public TableSetResult ListSelect(string SqlText)
+    public TableSetResult ListSelect(string SqlText) => ListSelect(SqlText, new SqlParams());
+    /// <summary>
+    /// Replaces the list table contents using a SELECT and its parameters.
+    /// </summary>
+    public TableSetResult ListSelect(string SqlText, SqlParams Params)
     {
         try
         {
@@ -301,7 +305,7 @@ public class TableSet
             fListTable.EventsDisabled = true;
             try
             {
-                int Count = fStore.SelectTo(fListTable, Text);
+                int Count = fStore.SelectTo(fListTable, Text, Params);
                 return new TableSetResult(TableSetResultStatus.Success, null, null, Count);
             }
             finally

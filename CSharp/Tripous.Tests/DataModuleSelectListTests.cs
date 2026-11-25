@@ -16,10 +16,10 @@ public class DataModuleSelectListTests
 {
     // ● public
     /// <summary>
-    /// Selects registered statements with the row limit and rejects unknown selects and filters.
+    /// Selects registered statements with validated filters and the row limit.
     /// </summary>
     [Fact]
-    public void SelectListUsesRegisteredSelectsAndRejectsFilters()
+    public void SelectListUsesRegisteredSelectsAndFilters()
     {
         string ConnectionName = $"Connection_{Guid.NewGuid():N}";
         string ModuleName = $"Module_{Guid.NewGuid():N}";
@@ -29,15 +29,22 @@ public class DataModuleSelectListTests
         Definition.Table.Name = "Customer";
         Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
         Definition.Table.Fields.Add(new FieldDef { Name = "Name" });
-        Definition.SelectList.Add("First", "SELECT Id, Name FROM Customer ORDER BY Name");
+        Definition.SelectList.Add("First", "SELECT Id, Name, IsActive, Amount FROM Customer ORDER BY Name");
         Definition.SelectList.Add("Second", "SELECT Id, Name FROM Customer ORDER BY Name DESC");
+        Definition.SelectList.Add("Terminated", "SELECT Id, Name FROM Customer ORDER BY Name; -- trailing comment");
+        Definition.SelectList.Add("Limited", "SELECT Id, Name FROM Customer LIMIT 1");
+        Definition.SelectList.Get("First").FilterDefs.Add("Name");
+        Definition.SelectList.Get("First").AddFilter("IsActive", FilterDataType: DataFieldType.Boolean);
+        Definition.SelectList.Get("First").AddFilter("Amount", FilterDataType: DataFieldType.Integer);
+        Definition.SelectList.Get("Terminated").FilterDefs.Add("Name");
+        Definition.SelectList.Get("Limited").FilterDefs.Add("Name");
         try
         {
             Db.Connections.Add(new DbConnectionInfo { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" });
             DataRegistry.Modules.Add(Definition);
             SqlStore Store = SqlStores.CreateSqlStore(ConnectionName);
-            Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT)");
-            Store.ExecSql("INSERT INTO Customer VALUES ('C1', 'Alice'), ('C2', 'Zoe')");
+            Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT, IsActive INTEGER, Amount INTEGER)");
+            Store.ExecSql("INSERT INTO Customer VALUES ('C1', 'Alice', 0, 5), ('C2', 'Zoe', 1, 15)");
             DbConfig.DefaultRowLimit = 1;
             RemOp.Initialize();
             RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.SelectList" };
@@ -57,11 +64,36 @@ public class DataModuleSelectListTests
             Request.Params["SelectName"] = "missing";
             Assert.False(RemoteOperations.Execute(Request).IsSuccess);
             Request.Params["SelectName"] = "First";
-            Request.Params["Filters"] = new[] { new { Field = "Name" } };
+            Request.Params["Filters"] = new[] { new JsonSelectFilter { Name = "Name", ConditionOp = "Contains", Value = "oe" } };
             RemoteResponse Filtered = RemoteOperations.Execute(Request);
-            Assert.False(Filtered.IsSuccess);
-            Assert.Contains("filters", Filtered.ErrorText);
+            Assert.True(Filtered.IsSuccess, Filtered.ErrorText);
+            Assert.Equal("Zoe", Assert.Single(Assert.IsType<JsonDataTable>(Filtered["Table"]).Rows).Data[1]);
             Request = Json.Deserialize<RemoteRequest>(Json.Serialize(Request));
+            Filtered = RemoteOperations.Execute(Request);
+            Assert.True(Filtered.IsSuccess, Filtered.ErrorText);
+            Assert.Equal("Zoe", Assert.Single(Assert.IsType<JsonDataTable>(Filtered["Table"]).Rows).Data[1]);
+            Request.Params["Filters"] = new[]
+            {
+                new JsonSelectFilter { Name = "IsActive", Value = true },
+                new JsonSelectFilter { Name = "Amount", ConditionOp = "Between", Value = 10, Value2 = 20 },
+            };
+            Request = Json.Deserialize<RemoteRequest>(Json.Serialize(Request));
+            Filtered = RemoteOperations.Execute(Request);
+            Assert.True(Filtered.IsSuccess, Filtered.ErrorText);
+            Assert.Equal("Zoe", Assert.Single(Assert.IsType<JsonDataTable>(Filtered["Table"]).Rows).Data[1]);
+            Request.Params["Filters"] = new[] { new JsonSelectFilter { Name = "Name", ConditionOp = "Contains", Value = "oe" } };
+            Request.Params["SelectName"] = "Terminated";
+            Filtered = RemoteOperations.Execute(Request);
+            Assert.True(Filtered.IsSuccess, Filtered.ErrorText);
+            Assert.Equal("Zoe", Assert.Single(Assert.IsType<JsonDataTable>(Filtered["Table"]).Rows).Data[1]);
+            Request.Params["SelectName"] = "Limited";
+            RemoteResponse Limited = RemoteOperations.Execute(Request);
+            Assert.False(Limited.IsSuccess);
+            Assert.Contains("LIMIT", Limited.ErrorText);
+            Request.Params["SelectName"] = "First";
+            Request.Params["Filters"] = new[] { new JsonSelectFilter { Name = "Unknown", Value = "Zoe" } };
+            Assert.False(RemoteOperations.Execute(Request).IsSuccess);
+            Request.Params["Filters"] = new[] { new JsonSelectFilter { Name = "Name", ConditionOp = "Greater", Value = "Zoe" } };
             Assert.False(RemoteOperations.Execute(Request).IsSuccess);
         }
         finally

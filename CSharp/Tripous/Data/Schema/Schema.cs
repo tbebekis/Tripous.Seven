@@ -15,6 +15,23 @@ public class Schema
 {
     // ● public
     /// <summary>
+    /// Checks the schema and every registered version without executing SQL.
+    /// </summary>
+    public virtual void CheckDescriptor()
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Domain);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ConnectionName);
+        HashSet<int> Numbers = new();
+        foreach (SchemaVersion Version in Versions)
+        {
+            if (Version == null)
+                throw new InvalidOperationException("A schema version cannot be null.");
+            Version.CheckDescriptor();
+            if (!Numbers.Add(Version.Version))
+                throw new InvalidOperationException($"Schema version {Version.Version} is registered more than once.");
+        }
+    }
+    /// <summary>
     /// Finds a version by number, or returns null when it is absent.
     /// </summary>
     public SchemaVersion Find(int Version) => Versions.Find(Item => Item.Version == Version);
@@ -41,8 +58,7 @@ public class Schema
     /// </summary>
     public void Execute()
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(Domain);
-        ArgumentException.ThrowIfNullOrWhiteSpace(ConnectionName);
+        CheckDescriptor();
         DbConnectionInfo ConnectionInfo = Db.GetConnectionInfo(ConnectionName);
         DbIni Ini = new(ConnectionInfo);
         string Entry = $"Database.Version.{ConnectionInfo.Name}.{Domain}";

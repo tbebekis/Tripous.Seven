@@ -11,7 +11,7 @@ namespace Tripous.Data;
 /// <summary>
 /// Describes a table field and produces its portable SQL definition.
 /// </summary>
-public class DataFieldDef
+public class DataFieldDef : BaseDef
 {
     // ● private fields
     DataFieldType? fDataType;
@@ -20,15 +20,58 @@ public class DataFieldDef
     /// <summary>
     /// Validates the field before generating its SQL definition.
     /// </summary>
-    public void Check()
+    public void Check() => CheckDescriptor();
+    /// <summary>
+    /// Checks this field's definition independently of SQL generation.
+    /// </summary>
+    public override void CheckDescriptor()
     {
         DataTableDef.ValidateIdentifier(Name);
+        base.CheckDescriptor();
         if (DataType == DataFieldType.None)
             throw new InvalidOperationException($"Field '{Name}' must have a data type.");
+        if (!Enum.IsDefined(DataType))
+            throw new InvalidOperationException($"Field '{Name}' must have a valid data type.");
         if (DataType == DataFieldType.String && Length < 1)
             throw new InvalidOperationException($"String field '{Name}' must have a positive length.");
         if (IsPrimaryKey && DataType != DataFieldType.String && DataType != DataFieldType.Integer && DataType != DataFieldType.Int64)
             throw new InvalidOperationException($"Primary key '{Name}' must use a string or integer field.");
+        if (Unique && !string.IsNullOrWhiteSpace(UniqueConstraintName))
+            DataTableDef.ValidateIdentifier(UniqueConstraintName);
+        if (!string.IsNullOrWhiteSpace(ForeignKey))
+        {
+            string[] Parts = ForeignKey.Split('.', StringSplitOptions.TrimEntries);
+            if (Parts.Length != 2)
+                throw new InvalidOperationException("A foreign key must specify Table.Field.");
+            DataTableDef.ValidateIdentifier(Parts[0]);
+            DataTableDef.ValidateIdentifier(Parts[1]);
+            if (!string.IsNullOrWhiteSpace(ForeignKeyConstraintName))
+                DataTableDef.ValidateIdentifier(ForeignKeyConstraintName);
+        }
+    }
+    /// <summary>
+    /// Copies the field definition, including whether its type was explicitly set.
+    /// </summary>
+    public override void Assign(IDef Source)
+    {
+        ArgumentNullException.ThrowIfNull(Source);
+        if (ReferenceEquals(this, Source))
+            return;
+        if (Source is not DataFieldDef Other)
+            throw new ArgumentException("The source must be a DataFieldDef.", nameof(Source));
+        Name = Other.fName;
+        TitleKey = Other.fTitleKey;
+        fDataType = Other.fDataType;
+        Length = Other.Length;
+        DecimalPart = Other.DecimalPart;
+        Required = Other.Required;
+        IsPrimaryKey = Other.IsPrimaryKey;
+        DefaultExpression = Other.DefaultExpression;
+        Unique = Other.Unique;
+        UniqueConstraintName = Other.UniqueConstraintName;
+        ForeignKey = Other.ForeignKey;
+        ForeignKeyConstraintName = Other.ForeignKeyConstraintName;
+        JsonLoaded();
     }
     /// <summary>
     /// Returns the portable SQL definition for the field.
@@ -106,13 +149,23 @@ public class DataFieldDef
     /// <summary>
     /// Gets or sets the field name.
     /// </summary>
-    public string Name { get; set; } = "";
+    public override string Name { get => fName ?? ""; set => base.Name = value; }
     /// <summary>
     /// Gets or sets the field type. An unspecified primary key uses the configured default.
     /// </summary>
+    [JsonIgnore]
     public DataFieldType DataType
     {
         get => fDataType ?? (IsPrimaryKey ? DbConfig.DefaultPrimaryKeyType : DataFieldType.None);
+        set => fDataType = value;
+    }
+    /// <summary>
+    /// Gets or sets the explicitly configured type for JSON; null means no explicit type.
+    /// </summary>
+    [JsonPropertyName("DataType")]
+    public DataFieldType? JsonDataType
+    {
+        get => fDataType;
         set => fDataType = value;
     }
     /// <summary>

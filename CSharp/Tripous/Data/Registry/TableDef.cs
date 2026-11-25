@@ -20,52 +20,6 @@ public class TableDef : BaseDef
     DefList<FieldDef> fFields;
     DefList<TableDef> fDetails;
 
-    // ● private
-    object ParseDefaultValue(FieldDef Field)
-    {
-        string Value = Field.DefaultValue;
-        try
-        {
-            var Culture = System.Globalization.CultureInfo.InvariantCulture;
-            var IntegerStyle = System.Globalization.NumberStyles.AllowLeadingSign;
-            var NumberStyle = IntegerStyle | System.Globalization.NumberStyles.AllowDecimalPoint;
-            switch (Field.DataType)
-            {
-                case DataFieldType.String:
-                case DataFieldType.TextBlob:
-                    return Value;
-                case DataFieldType.Integer:
-                    return int.Parse(Value, IntegerStyle, Culture);
-                case DataFieldType.Int64:
-                    return long.Parse(Value, IntegerStyle, Culture);
-                case DataFieldType.Double:
-                    double Number = double.Parse(Value, NumberStyle, Culture);
-                    if (!double.IsFinite(Number))
-                        throw new FormatException("A finite number is required.");
-                    return Number;
-                case DataFieldType.Decimal:
-                case DataFieldType.Decimal_:
-                    return decimal.Parse(Value, NumberStyle, Culture);
-                case DataFieldType.Boolean:
-                    if (string.Equals(Value, "true", StringComparison.OrdinalIgnoreCase)) return 1;
-                    if (string.Equals(Value, "false", StringComparison.OrdinalIgnoreCase)) return 0;
-                    throw new FormatException("Expected true or false.");
-                case DataFieldType.Date:
-                    return DateTime.ParseExact(Value, "yyyy-MM-dd", Culture, System.Globalization.DateTimeStyles.None);
-                case DataFieldType.DateTime:
-                    return DateTime.ParseExact(Value, new[] { "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF" }, Culture, System.Globalization.DateTimeStyles.None);
-                case DataFieldType.Blob:
-                    throw new NotSupportedException("Blob defaults are not supported.");
-                default:
-                    throw new NotSupportedException("The field type does not support defaults.");
-            }
-        }
-        catch (Exception Error) when (Error is FormatException or OverflowException or NotSupportedException)
-        {
-            throw new InvalidOperationException($"Invalid default for field '{Field.Name}' in table '{Name}'.", Error);
-        }
-    }
-
     // ● public
     /// <summary>
     /// Creates a memory table and its columns from this definition.
@@ -75,9 +29,6 @@ public class TableDef : BaseDef
     public MemTable CreateDescriptorTable()
     {
         CheckDescriptor();
-        if (Fields.Find(KeyField) == null)
-            throw new InvalidOperationException($"Key field '{KeyField}' was not found in '{Name}'.");
-
         MemTable Table = new(Name) { KeyField = KeyField };
         if (!string.IsNullOrWhiteSpace(MasterField))
             Table.MasterField = MasterField;
@@ -86,7 +37,6 @@ public class TableDef : BaseDef
 
         foreach (FieldDef Field in Fields)
         {
-            Field.CheckDescriptor();
             Type ColumnType = Field.DataType switch
             {
                 DataFieldType.String => typeof(string),
@@ -105,7 +55,7 @@ public class TableDef : BaseDef
                 Column.MaxLength = Field.MaxLength;
             if (Field.DefaultValue != null)
             {
-                try { Column.DefaultValue = ParseDefaultValue(Field); }
+                try { Column.DefaultValue = Field.ParseDefaultValue(); }
                 catch (Exception Error) when (Error is not InvalidOperationException)
                 {
                     throw new InvalidOperationException($"Invalid default for field '{Field.Name}' in table '{Name}'.", Error);
@@ -125,25 +75,12 @@ public class TableDef : BaseDef
     public TableSqls BuildSql(OidMode Mode)
     {
         CheckDescriptor();
-        DataTableDef.ValidateIdentifier(Name);
         FieldDef Key = Fields.Find(KeyField);
-        if (Key == null || !Key.IsNativeField)
-            throw new InvalidOperationException($"Key field '{KeyField}' must be a native field of '{Name}'.");
         bool IntegerKey = Key.DataType == DataFieldType.Integer || Key.DataType == DataFieldType.Int64;
-        if (Key.DataType != DataFieldType.String && !IntegerKey)
-            throw new InvalidOperationException($"Key field '{KeyField}' must be a string or integer.");
         if (IntegerKey && Mode != OidMode.Generator && Mode != OidMode.AutoInc)
             throw new InvalidOperationException($"Integer key field '{KeyField}' requires a generator or auto-increment mode.");
 
         List<FieldDef> NativeFields = Fields.Where(Field => Field.IsNativeField).ToList();
-        foreach (FieldDef Field in NativeFields)
-        {
-            Field.CheckDescriptor();
-            DataTableDef.ValidateIdentifier(Field.Name);
-            if (Field.Name.Any(Ch => !(char.IsLetterOrDigit(Ch) || Ch == '_')))
-                throw new InvalidOperationException($"Field '{Field.Name}' cannot be used as a SQL parameter name.");
-        }
-
         string Prefix = SqlProvider.GlobalPrefix.ToString();
         List<FieldDef> InsertFields = NativeFields.Where(Field => !Field.IsNoInsertOrUpdate
             && !(ReferenceEquals(Field, Key) && IntegerKey && Mode == OidMode.AutoInc)).ToList();
@@ -174,12 +111,68 @@ public class TableDef : BaseDef
     /// </summary>
     public override void CheckDescriptor()
     {
+        CheckTreeTopology();
         base.CheckDescriptor();
+        DataTableDef.ValidateIdentifier(Name);
         if (string.IsNullOrWhiteSpace(KeyField))
             throw new InvalidOperationException(Texts.GS($"E_{GetType()}_NoKeyField", "Table key field is required."));
         if (Fields.Count == 0)
             throw new InvalidOperationException(Texts.GS($"E_{GetType()}_NoFields", "Table fields are required."));
+        try
+        {
+            Fields.CheckDescriptors();
+        }
+        catch (InvalidOperationException Error)
+        {
+            throw new InvalidOperationException($"Invalid field definition in table '{Name}': {Error.Message}", Error);
+        }
+        FieldDef Key = Fields.Find(KeyField);
+        if (Key == null || !Key.IsNativeField)
+            throw new InvalidOperationException($"Key field '{KeyField}' must be a native field of '{Name}'.");
+        if (Key.DataType != DataFieldType.String && Key.DataType != DataFieldType.Integer && Key.DataType != DataFieldType.Int64)
+            throw new InvalidOperationException($"Key field '{KeyField}' must be a string or integer.");
+        Details.CheckDescriptors();
+        foreach (TableDef Detail in Details)
+        {
+            string MasterName = string.IsNullOrWhiteSpace(Detail.MasterField) ? "Id" : Detail.MasterField;
+            string DetailName = string.IsNullOrWhiteSpace(Detail.DetailField) ? Detail.KeyField : Detail.DetailField;
+            FieldDef MasterFieldDef = Fields.Find(MasterName);
+            FieldDef DetailFieldDef = Detail.Fields.Find(DetailName);
+            if (MasterFieldDef == null || DetailFieldDef == null)
+                throw new InvalidOperationException($"Invalid master-detail fields for '{Detail.Name}'.");
+            Type MasterType = GetRelationFieldType(MasterFieldDef.DataType);
+            Type DetailType = GetRelationFieldType(DetailFieldDef.DataType);
+            if (MasterType == null || DetailType == null)
+                throw new NotSupportedException($"Unsupported master-detail field type for '{Detail.Name}'.");
+            if (MasterType != DetailType)
+                throw new InvalidOperationException($"Invalid master-detail fields for '{Detail.Name}'.");
+        }
     }
+    // ● private
+    void CheckTreeTopology()
+    {
+        HashSet<TableDef> Tables = new(ReferenceEqualityComparer.Instance);
+        HashSet<string> Names = new(StringComparer.OrdinalIgnoreCase);
+        Stack<TableDef> Pending = new();
+        Pending.Push(this);
+        while (Pending.Count > 0)
+        {
+            TableDef Table = Pending.Pop();
+            if (!Tables.Add(Table))
+                throw new InvalidOperationException($"Table '{Table.Name}' occurs more than once in the table tree.");
+            if (!string.IsNullOrWhiteSpace(Table.Name) && !Names.Add(Table.Name))
+                throw new InvalidOperationException($"Table name '{Table.Name}' occurs more than once in the table tree.");
+            foreach (TableDef Detail in Table.Details)
+                Pending.Push(Detail);
+        }
+    }
+    static Type GetRelationFieldType(DataFieldType DataType) => DataType switch
+    {
+        DataFieldType.String or DataFieldType.TextBlob => typeof(string),
+        DataFieldType.Integer or DataFieldType.Boolean => typeof(int),
+        DataFieldType.Int64 => typeof(long),
+        _ => null,
+    };
     /// <summary>
     /// Reconnects fields and detail definitions to this table recursively.
     /// </summary>

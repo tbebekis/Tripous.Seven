@@ -15,6 +15,33 @@ static internal class SqlTextScanner
 {
     // ● internal
     /// <summary>
+    /// Removes a trailing statement terminator and protects the closing parenthesis
+    /// from a trailing line comment when embedding SQL in a subquery.
+    /// </summary>
+    static internal string PrepareSubquery(string SqlText)
+    {
+        ArgumentNullException.ThrowIfNull(SqlText);
+        int Index = 0;
+        int LastCodeEnd = 0;
+        while (Index < SqlText.Length)
+        {
+            bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
+                || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
+            if (SkipProtectedRegion(SqlText, ref Index))
+            {
+                if (!Comment)
+                    LastCodeEnd = Index;
+                continue;
+            }
+            if (!char.IsWhiteSpace(SqlText[Index]))
+                LastCodeEnd = Index + 1;
+            Index++;
+        }
+        if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
+            SqlText = SqlText.Remove(LastCodeEnd - 1, 1);
+        return SqlText + "\n";
+    }
+    /// <summary>
     /// Advances past a quoted region or comment starting at the current index.
     /// Returns false without changing the index when no such region starts there.
     /// </summary>

@@ -20,8 +20,50 @@ public class ModuleDef : BaseDef
     SelectDefs fSelectList;
     SelectDefs fStocks;
     bool fCascadeDeletes = true;
+    string fCodeProvider;
+    string fCodeFieldName;
+    string fRowVersionFieldName;
 
     // ● public
+    /// <summary>
+    /// Checks this module and all its table, SELECT and stock descriptors.
+    /// </summary>
+    public override void CheckDescriptor()
+    {
+        base.CheckDescriptor();
+        if (Table == null)
+            throw new InvalidOperationException("The data module requires a top table definition.");
+        Table.CheckDescriptor();
+        SelectList.CheckDescriptors();
+        Stocks.CheckDescriptors();
+        if (!string.IsNullOrWhiteSpace(RowVersionFieldName))
+        {
+            FieldDef Field = Table.Fields.Find(RowVersionFieldName)
+                ?? throw new InvalidOperationException($"Row version field '{RowVersionFieldName}' was not found in the top table.");
+            if (Field.DataType != DataFieldType.String)
+                throw new InvalidOperationException($"Row version field '{RowVersionFieldName}' must be a string.");
+            if (Field.MaxLength != -1 && Field.MaxLength < 36)
+                throw new InvalidOperationException($"Row version field '{RowVersionFieldName}' must hold a 36-character GUID.");
+            if (!Field.IsNativeField || Field.IsNoInsertOrUpdate)
+                throw new InvalidOperationException($"Row version field '{RowVersionFieldName}' must be a database field included in INSERT and UPDATE statements.");
+            if (string.Equals(Field.Name, Table.KeyField, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Row version field '{RowVersionFieldName}' must not be the primary key.");
+            if (!string.IsNullOrWhiteSpace(CodeProvider) && string.Equals(Field.Name, CodeFieldName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Row version field '{RowVersionFieldName}' must not be the automatic code field.");
+        }
+        if (!string.IsNullOrWhiteSpace(CodeProvider))
+        {
+            FieldDef Field = Table.Fields.Find(CodeFieldName)
+                ?? throw new InvalidOperationException($"Code field '{CodeFieldName}' was not found in the top table.");
+            if (Field.DataType != DataFieldType.String)
+                throw new InvalidOperationException($"Code field '{CodeFieldName}' must be a string.");
+            if (!Field.IsNativeField || Field.IsNoInsertOrUpdate)
+                throw new InvalidOperationException($"Code field '{CodeFieldName}' must be a database field included in INSERT statements.");
+            if (string.Equals(Field.Name, Table.KeyField, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Code field '{CodeFieldName}' must not be the primary key.");
+            DataRegistry.CodeProviders.Get(CodeProvider);
+        }
+    }
     /// <summary>
     /// Creates and initializes a data module using this definition.
     /// </summary>
@@ -62,6 +104,55 @@ public class ModuleDef : BaseDef
     }
 
     // ● properties
+    /// <summary>
+    /// Gets or sets the top table field used for optimistic concurrency.
+    /// An empty name disables row version checking. The field must be a native
+    /// string included in INSERT and UPDATE, distinct from the key and code field,
+    /// and must hold a 36-character GUID. Row version commits are not implemented yet.
+    /// </summary>
+    public string RowVersionFieldName
+    {
+        get => fRowVersionFieldName;
+        set
+        {
+            if (fRowVersionFieldName == value)
+                return;
+            fRowVersionFieldName = value;
+            NotifyPropertyChanged(nameof(RowVersionFieldName));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the registered provider used for the top table's automatic code.
+    /// An empty value disables automatic code generation.
+    /// </summary>
+    public string CodeProvider
+    {
+        get => fCodeProvider;
+        set
+        {
+            if (fCodeProvider == value)
+                return;
+            fCodeProvider = value;
+            NotifyPropertyChanged(nameof(CodeProvider));
+            NotifyPropertyChanged(nameof(CodeFieldName));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the top table's code field name. When a provider is configured,
+    /// an empty name defaults to Code. The field must be a string database field
+    /// included in INSERT statements and must not be the primary key.
+    /// </summary>
+    public string CodeFieldName
+    {
+        get => !string.IsNullOrWhiteSpace(fCodeFieldName) ? fCodeFieldName : !string.IsNullOrWhiteSpace(CodeProvider) ? "Code" : fCodeFieldName;
+        set
+        {
+            if (fCodeFieldName == value)
+                return;
+            fCodeFieldName = value;
+            NotifyPropertyChanged(nameof(CodeFieldName));
+        }
+    }
     /// <summary>
     /// Gets or sets the named SELECT definitions for the module's list view.
     /// Each result must contain the main table's key under its KeyField name.

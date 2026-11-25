@@ -216,6 +216,10 @@ public class TableSetTests
             Assert.Equal("IT", List.Rows[1]["Id"]);
             Assert.All(List.Rows.Cast<DataRow>(), Row => Assert.Equal(DataRowState.Unchanged, Row.RowState));
             Assert.False(List.EventsDisabled);
+            TableSetResult Filtered = Set.ListSelect($"SELECT Id, Name FROM Country WHERE Name = {SqlProvider.GlobalPrefix}Name", new SqlParams().Add("Name", "Italy"));
+            Assert.Equal(TableSetResultStatus.Success, Filtered.Status);
+            Assert.Equal(1, Filtered.RowCount);
+            Assert.Equal("IT", List.Rows[0]["Id"]);
             TableSetResult EmptyRows = Set.ListSelect("SELECT Id, Name FROM Country WHERE 1 = 0");
             Assert.Equal(TableSetResultStatus.Success, EmptyRows.Status);
             Assert.Equal(0, EmptyRows.RowCount);

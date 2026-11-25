@@ -14,6 +14,25 @@ namespace Tripous.Data;
 /// </summary>
 public class SchemaVersion
 {
+    // ● internal
+    internal Type DefinitionType { get; set; }
+
+    // ● public
+    /// <summary>
+    /// Checks the version number and each registered table and view descriptor.
+    /// </summary>
+    public virtual void CheckDescriptor()
+    {
+        if (Version <= 0)
+            throw new InvalidOperationException("A schema version number must be positive.");
+        foreach (SchemaItem Item in Tables.Concat(Views))
+        {
+            if (Item == null)
+                throw new InvalidOperationException("A schema item cannot be null.");
+            Item.CheckDescriptor();
+        }
+    }
+
     // ● properties
     /// <summary>
     /// Gets or sets the schema version number.

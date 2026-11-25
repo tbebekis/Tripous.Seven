@@ -120,6 +120,26 @@ public class SqlStore
         }
     }
     /// <summary>
+    /// Reads the result column metadata of a SELECT without loading its rows.
+    /// </summary>
+    public ReadOnlyCollection<DbColumn> GetSelectSchema(string SqlText, SqlParams Params)
+    {
+        ArgumentNullException.ThrowIfNull(Params);
+        using (SqlTransactionContext Context = BeginTransactionContext())
+        using (DbCommand Command = Context.Transaction.Connection.CreateCommand())
+        {
+            Command.Transaction = Context.Transaction;
+            Command.CommandTimeout = fConnectionInfo.CommandTimeoutSeconds;
+            fProvider.PrepareCommand(Command, SqlText, Params);
+            LogSql(Command);
+            ReadOnlyCollection<DbColumn> Result;
+            using (DbDataReader Reader = Command.ExecuteReader(CommandBehavior.SchemaOnly))
+                Result = Reader.GetColumnSchema();
+            Context.Commit();
+            return Result;
+        }
+    }
+    /// <summary>
     /// Loads an existing table with the results of a SELECT.
     /// </summary>
     public int SelectTo(DbTransaction Transaction, DataTable Table, string SqlText) => SelectTo(Transaction, Table, SqlText, fConnectionInfo.CommandTimeoutSeconds, new SqlParams());

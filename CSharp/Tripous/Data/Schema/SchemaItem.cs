@@ -13,6 +13,16 @@ namespace Tripous.Data;
 /// </summary>
 public class SchemaItem
 {
+    // ● public
+    /// <summary>
+    /// Checks the schema object name and its creation SQL.
+    /// </summary>
+    public virtual void CheckDescriptor()
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(SqlText);
+    }
+
     // ● properties
     /// <summary>
     /// Gets or sets the name of the schema object.

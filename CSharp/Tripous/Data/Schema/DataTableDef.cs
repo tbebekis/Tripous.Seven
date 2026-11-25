@@ -11,7 +11,7 @@ namespace Tripous.Data;
 /// <summary>
 /// Describes a database table and produces a portable CREATE TABLE statement.
 /// </summary>
-public class DataTableDef
+public class DataTableDef : BaseDef
 {
     // ● private
     static string CreateConstraintName(string Name)
@@ -54,11 +54,71 @@ public class DataTableDef
     /// </summary>
     public string GetDefText()
     {
+        CheckDescriptor();
+        return BuildDefText();
+    }
+    /// <summary>
+    /// Checks the table, fields and constraints without executing SQL.
+    /// </summary>
+    public override void CheckDescriptor()
+    {
         ValidateIdentifier(Name);
+        base.CheckDescriptor();
         if (Fields.Count == 0)
             throw new InvalidOperationException("A table must contain at least one field.");
-        List<string> Definitions = new();
+        HashSet<string> FieldNames = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> ConstraintNames = new(StringComparer.OrdinalIgnoreCase);
+        int PrimaryKeyCount = 0;
+        foreach (DataFieldDef Field in Fields)
+        {
+            Field.CheckDescriptor();
+            if (!FieldNames.Add(Field.Name))
+                throw new InvalidOperationException($"Duplicate field name: {Field.Name}");
+            if (Field.IsPrimaryKey && ++PrimaryKeyCount > 1)
+                throw new InvalidOperationException("A table cannot have multiple primary key fields.");
+            if (Field.Unique)
+                CheckConstraintName(ConstraintNames, string.IsNullOrWhiteSpace(Field.UniqueConstraintName)
+                    ? CreateConstraintName($"UQ_{Name}_{Field.Name}") : Field.UniqueConstraintName);
+            if (!string.IsNullOrWhiteSpace(Field.ForeignKey))
+                CheckConstraintName(ConstraintNames, string.IsNullOrWhiteSpace(Field.ForeignKeyConstraintName)
+                    ? CreateConstraintName($"FK_{Name}_{Field.Name}") : Field.ForeignKeyConstraintName);
+        }
+        foreach (UniqueConstraintDef Constraint in UniqueConstraints)
+        {
+            Constraint.CheckDescriptor();
+            string[] Names = Constraint.FieldNames.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            foreach (string FieldName in Names)
+                if (!FieldNames.Contains(FieldName))
+                    throw new InvalidOperationException($"Unique constraint field '{FieldName}' was not found in table '{Name}'.");
+            CheckConstraintName(ConstraintNames, string.IsNullOrWhiteSpace(Constraint.Name)
+                ? CreateConstraintName($"UQ_{Name}_{string.Join("_", Names)}") : Constraint.Name);
+        }
+    }
+    /// <summary>
+    /// Copies the table definition and independently clones its fields and constraints.
+    /// </summary>
+    public override void Assign(IDef Source)
+    {
+        ArgumentNullException.ThrowIfNull(Source);
+        if (ReferenceEquals(this, Source))
+            return;
+        if (Source is not DataTableDef Other)
+            throw new ArgumentException("The source must be a DataTableDef.", nameof(Source));
+        List<DataFieldDef> NewFields = Other.Fields.Select(Field => (DataFieldDef)Field.Clone()).ToList();
+        List<UniqueConstraintDef> NewConstraints = Other.UniqueConstraints.Select(Constraint => (UniqueConstraintDef)Constraint.Clone()).ToList();
+        Name = Other.fName;
+        TitleKey = Other.fTitleKey;
+        Fields.Clear();
+        Fields.AddRange(NewFields);
+        UniqueConstraints.Clear();
+        UniqueConstraints.AddRange(NewConstraints);
+        JsonLoaded();
+    }
+
+    // ● private
+    string BuildDefText()
+    {
+        List<string> Definitions = new();
         foreach (DataFieldDef Field in Fields)
             Definitions.Add(Field.GetDefText());
         foreach (DataFieldDef Field in Fields)
@@ -67,7 +127,6 @@ public class DataTableDef
             {
                 string ConstraintName = string.IsNullOrWhiteSpace(Field.UniqueConstraintName)
                     ? CreateConstraintName($"UQ_{Name}_{Field.Name}") : Field.UniqueConstraintName;
-                CheckConstraintName(ConstraintNames, ConstraintName);
                 Definitions.Add($"CONSTRAINT {ConstraintName} UNIQUE ({Field.Name})");
             }
         }
@@ -76,7 +135,6 @@ public class DataTableDef
             string[] FieldNames = Constraint.FieldNames.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             string ConstraintName = string.IsNullOrWhiteSpace(Constraint.Name)
                 ? CreateConstraintName($"UQ_{Name}_{string.Join("_", FieldNames)}") : Constraint.Name;
-            CheckConstraintName(ConstraintNames, ConstraintName);
             Definitions.Add(Constraint.GetDefText(ConstraintName));
         }
         foreach (DataFieldDef Field in Fields)
@@ -85,18 +143,14 @@ public class DataTableDef
             {
                 string ConstraintName = string.IsNullOrWhiteSpace(Field.ForeignKeyConstraintName)
                     ? CreateConstraintName($"FK_{Name}_{Field.Name}") : Field.ForeignKeyConstraintName;
-                CheckConstraintName(ConstraintNames, ConstraintName);
                 string[] Parts = Field.ForeignKey.Split('.', StringSplitOptions.TrimEntries);
-                if (Parts.Length != 2)
-                    throw new InvalidOperationException("A foreign key must specify Table.Field.");
-                ValidateIdentifier(Parts[0]);
-                ValidateIdentifier(Parts[1]);
                 Definitions.Add($"CONSTRAINT {ConstraintName} FOREIGN KEY ({Field.Name}) REFERENCES {Parts[0]} ({Parts[1]})");
             }
         }
         return $"CREATE TABLE {Name} (\n    {string.Join(",\n    ", Definitions)}\n)";
     }
 
+    // ● public
     /// <summary>
     /// Adds a field of the specified type and returns its definition.
     /// </summary>
@@ -187,13 +241,15 @@ public class DataTableDef
     /// <summary>
     /// Gets or sets the table name.
     /// </summary>
-    public string Name { get; set; } = "";
+    public override string Name { get => fName ?? ""; set => base.Name = value; }
     /// <summary>
     /// Gets the table fields.
     /// </summary>
+    [JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
     public List<DataFieldDef> Fields { get; } = new();
     /// <summary>
     /// Gets the table-level unique constraints.
     /// </summary>
+    [JsonObjectCreationHandling(JsonObjectCreationHandling.Populate)]
     public List<UniqueConstraintDef> UniqueConstraints { get; } = new();
 }

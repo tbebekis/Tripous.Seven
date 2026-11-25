@@ -24,4 +24,8 @@ static public class DataRegistry
     /// Gets the named data module definitions.
     /// </summary>
     static public DefList<ModuleDef> Modules { get; } = new();
+    /// <summary>
+    /// Gets the named code provider definitions.
+    /// </summary>
+    static public DefList<CodeProviderDef> CodeProviders { get; } = new();
 }
