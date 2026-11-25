@@ -19,6 +19,8 @@ public abstract class DataModuleRemoteOperation : RemoteOperation
     /// TableSet result was produced. IsSuccess describes the overall operation.
     /// For a commit, Success or AfterCommitFailed confirms database commit;
     /// CommitFailed only means the commit was not confirmed and may be uncertain.
+    /// RowVersionConflict identifies a failed comparison, but does not confirm that
+    /// rollback of other transaction work succeeded.
     /// A later module hook may fail even when the TableSet status is Success.
     /// </summary>
     public override RemoteResponse Execute(RemoteRequest Request)

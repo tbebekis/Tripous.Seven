@@ -108,7 +108,7 @@ public class ModuleDef : BaseDef
     /// Gets or sets the top table field used for optimistic concurrency.
     /// An empty name disables row version checking. The field must be a native
     /// string included in INSERT and UPDATE, distinct from the key and code field,
-    /// and must hold a 36-character GUID. Row version commits are not implemented yet.
+    /// and must hold a 36-character GUID.
     /// </summary>
     public string RowVersionFieldName
     {

@@ -130,9 +130,10 @@ public class CodeProviderCommitTests
     /// Manual codes and updates do not consume sequence numbers.
     /// </summary>
     [Theory]
-    [InlineData("Code", false)]
-    [InlineData("OrderNumber", true)]
-    public void CommitReservesCodeAndRestoresItOnRollback(string FieldName, bool UseCustomName)
+    [InlineData("Code", false, false)]
+    [InlineData("OrderNumber", true, false)]
+    [InlineData("OrderNumber", true, true)]
+    public void CommitReservesCodeAndRestoresItOnRollback(string FieldName, bool UseCustomName, bool UseRowVersion)
     {
         string ConnectionName = $"codes-{Guid.NewGuid():N}";
         string ProviderName = $"provider-{Guid.NewGuid():N}";
@@ -145,7 +146,8 @@ public class CodeProviderCommitTests
             DataRegistry.CodeProviders.Add(Provider);
             SystemSchema.Register(ConnectionName).Execute();
             SqlStore Store = new(Info);
-            Store.ExecSql($"CREATE TABLE Customer (Id TEXT PRIMARY KEY, {FieldName} TEXT NOT NULL, Name TEXT NOT NULL)");
+            string VersionColumn = UseRowVersion ? ", Version TEXT NOT NULL" : "";
+            Store.ExecSql($"CREATE TABLE Customer (Id TEXT PRIMARY KEY, {FieldName} TEXT NOT NULL, Name TEXT NOT NULL{VersionColumn})");
             Store.ExecSql("INSERT INTO SYS_NUMBER_SERIES (Id, Code, Name, Pattern) VALUES (:Id, :Code, :Name, :Pattern)", new SqlParams().Add("Id", Guid.NewGuid().ToString()).Add("Code", ProviderName).Add("Name", ProviderName).Add("Pattern", "C-{XXXX}"));
             ModuleDef Definition = new() { Name = "Customer", ConnectionName = ConnectionName, CodeProvider = ProviderName };
             if (UseCustomName)
@@ -154,6 +156,11 @@ public class CodeProviderCommitTests
             Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
             Definition.Table.Fields.Add(new FieldDef { Name = FieldName });
             Definition.Table.Fields.Add(new FieldDef { Name = "Name" });
+            if (UseRowVersion)
+            {
+                Definition.RowVersionFieldName = "Version";
+                Definition.Table.Fields.Add(new FieldDef { Name = "Version", MaxLength = 36 });
+            }
             Definition.CodeFieldName = "Missing";
             Assert.Throws<InvalidOperationException>(() => Definition.Create());
             Definition.CodeFieldName = FieldName;
@@ -178,10 +185,14 @@ public class CodeProviderCommitTests
             Assert.True(Module.CurrentRow.IsNull(FieldName));
             Assert.Throws<SqliteException>(() => Module.Commit(false));
             Assert.True(Module.CurrentRow.IsNull(FieldName));
+            if (UseRowVersion)
+                Assert.True(Module.CurrentRow.IsNull("Version"));
             Assert.Equal(1L, Convert.ToInt64(Store.Select("SELECT NextNumber FROM SYS_NUMBER_SERIES").Rows[0][0]));
             Module.CurrentRow["Name"] = "Alice";
             Module.Commit(false);
             Assert.Equal("C-0001", Module.CurrentRow[FieldName]);
+            if (UseRowVersion)
+                Assert.True(Guid.TryParse((string)Module.CurrentRow["Version"], out _));
             Assert.Equal(2L, Convert.ToInt64(Store.Select("SELECT NextNumber FROM SYS_NUMBER_SERIES").Rows[0][0]));
             Module.CurrentRow["Name"] = "Alice updated";
             Module.Commit(false);

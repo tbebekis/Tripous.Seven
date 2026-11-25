@@ -15,9 +15,9 @@ static public class DbConfig
 {
     // ● properties
     /// <summary>
-    /// Gets or sets the default maximum number of rows in a data module list.
+    /// Gets or sets the global maximum number of rows in a data module list.
     /// </summary>
-    static public int DefaultRowLimit { get; set; } = 300;
+    static public int DefaultRowLimit { get; set; } = 400;
     /// <summary>
     /// Gets or sets the default type of a primary key when no type is specified.
     /// </summary>

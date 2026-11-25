@@ -55,4 +55,9 @@ public enum TableSetResultStatus
     /// For a committed item, the result ID identifies the saved row when available.
     /// </summary>
     AfterCommitFailed,
+    /// <summary>
+    /// The row version comparison failed because the item changed or was deleted.
+    /// This reports the conflict, not whether rollback of other transaction work succeeded.
+    /// </summary>
+    RowVersionConflict,
 }

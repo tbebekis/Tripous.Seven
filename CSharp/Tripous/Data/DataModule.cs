@@ -224,8 +224,6 @@ public class DataModule
             throw new InvalidOperationException("The data module is already initialized.");
         ArgumentNullException.ThrowIfNull(Definition);
         Definition.CheckDescriptor();
-        if (!string.IsNullOrWhiteSpace(Definition.RowVersionFieldName))
-            throw new NotSupportedException("Row version commits are not implemented yet.");
 
         SqlStore NewStore = SqlStores.CreateSqlStore(Definition.ConnectionName);
         TableList NewTables = new();
@@ -280,7 +278,7 @@ public class DataModule
             NewStore.SelectTo(Stock, SqlText);
         }
         TableSetFlags Flags = Definition.CascadeDeletes ? TableSetFlags.None : TableSetFlags.NoCascadeDeletes;
-        TableSet NewTableSet = new(NewStore, NewListTable, NewItemTable, Flags);
+        TableSet NewTableSet = new(NewStore, NewListTable, NewItemTable, Flags, Definition.RowVersionFieldName);
         NewTableSet.TransactionStageCommit += HandleTransactionStageCommit;
         NewTableSet.TransactionStageDelete += TableSet_TransactionStageDelete;
 
@@ -617,6 +615,100 @@ public class DataModule
             }
         }
         return Result;
+    }
+
+    // ● batch operations
+    /// <summary>
+    /// Posts items prepared by the callbacks in groups of transactions. Each post
+    /// completes pending edits and invokes CheckCanCommit before entering the table set.
+    /// </summary>
+    public virtual BatchCommitResult CommitBatch(BatchCommitArgs Args)
+    {
+        ArgumentNullException.ThrowIfNull(Args);
+        BatchCommitArgs Inner = null;
+        Inner = new BatchCommitArgs(() =>
+        {
+            Args.Counter = Inner.Counter;
+            Args.PostCounter = Inner.PostCounter;
+            bool ShouldPost = Args.BeforeFunc();
+            if (ShouldPost)
+            {
+                EndEdit();
+                CheckCanCommit(false);
+            }
+            return ShouldPost;
+        }, Id =>
+        {
+            Args.Counter = Inner.Counter;
+            Args.PostCounter = Inner.PostCounter;
+            return Args.AfterFunc(Id);
+        }, Args.TransLimit) { Tag = Args.Tag };
+        fCommitting++;
+        try
+        {
+            BatchCommitResult Result = TableSet.CommitBatch(Inner);
+            if (ItemTable.Rows.Count == 0)
+                State = DataMode.None;
+            else if (ItemTable.Rows[0].RowState == DataRowState.Unchanged)
+                State = DataMode.Edit;
+            return Result;
+        }
+        finally
+        {
+            Args.Counter = Inner.Counter;
+            Args.PostCounter = Inner.PostCounter;
+            fCommitting--;
+        }
+    }
+    /// <summary>
+    /// Inserts source rows through CommitBatch using matching top-table fields.
+    /// Non-database fields, fields excluded from INSERT and the row version field
+    /// are not copied from the source. A non-empty source code is retained; an empty
+    /// code is generated when a code provider is configured. Manually supplied codes
+    /// do not advance SYS_NUMBER_SERIES. The caller must ensure that the series cannot
+    /// produce conflicting codes, including during the batch and in subsequent use.
+    /// The source table is not modified. An empty source succeeds without a post.
+    /// </summary>
+    public virtual BatchCommitResult BatchInsert(DataTable Source)
+    {
+        ArgumentNullException.ThrowIfNull(Source);
+        if (!IsInitialized)
+            throw new InvalidOperationException("The data module must be initialized.");
+        if (ReferenceEquals(Source, ItemTable))
+            throw new ArgumentException("The source table must be separate from the item table.", nameof(Source));
+        DataRow[] Rows = Source.Rows.Cast<DataRow>().ToArray();
+        if (Rows.Length == 0)
+            return new BatchCommitResult(BatchCommitStatus.Success, 0, -1, null);
+
+        List<(DataColumn Source, DataColumn Target)> Columns = new();
+        HashSet<string> Names = new(StringComparer.OrdinalIgnoreCase);
+        foreach (DataColumn SourceColumn in Source.Columns)
+        {
+            FieldDef Field = ModuleDef.Table.Fields.Find(SourceColumn.ColumnName);
+            if (Field == null || !Field.IsNativeField || Field.IsNoInsertOrUpdate)
+                continue;
+            if (!string.IsNullOrWhiteSpace(ModuleDef.RowVersionFieldName) && string.Equals(Field.Name, ModuleDef.RowVersionFieldName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            DataColumn TargetColumn = ItemTable.Columns[Field.Name]
+                ?? throw new InvalidOperationException($"Target column '{Field.Name}' was not found.");
+            if (!Names.Add(TargetColumn.ColumnName))
+                throw new ArgumentException($"Multiple source columns match '{TargetColumn.ColumnName}'.", nameof(Source));
+            if (SourceColumn.DataType != TargetColumn.DataType)
+                throw new ArgumentException($"Column type mismatch for '{SourceColumn.ColumnName}'.", nameof(Source));
+            Columns.Add((SourceColumn, TargetColumn));
+        }
+
+        BatchCommitArgs Args = null;
+        Args = new BatchCommitArgs(() =>
+        {
+            DataRow SourceRow = Rows[Args.Counter];
+            Insert();
+            DataRow TargetRow = ItemTable.Rows[0];
+            foreach ((DataColumn SourceColumn, DataColumn TargetColumn) in Columns)
+                TargetRow[TargetColumn] = SourceRow[SourceColumn];
+            return true;
+        }, _ => Args.Counter < Rows.Length - 1);
+        return CommitBatch(Args);
     }
 
     // ● JSON operations

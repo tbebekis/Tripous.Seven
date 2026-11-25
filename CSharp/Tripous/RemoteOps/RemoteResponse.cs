@@ -15,6 +15,8 @@ namespace Tripous.RemoteOps;
 /// IsSuccess reports the overall operation, which can fail after a database commit.
 /// An absent or null TableSetResultStatus alone does not establish the outcome of
 /// a database transaction; verify an uncertain outcome before retrying a commit.
+/// RowVersionConflict reports a failed version comparison; it does not confirm
+/// whether rollback of other transaction work succeeded.
 /// A request rejected before reaching an operation may not include this result.
 /// </summary>
 public class RemoteResponse

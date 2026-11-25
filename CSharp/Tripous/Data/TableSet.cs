@@ -25,6 +25,7 @@ public class TableSet
     readonly MemTable fListTable;
     readonly MemTable fItemTable;
     readonly TableSetFlags fFlags;
+    readonly string fRowVersionFieldName;
 
     // ● private SQL preparation
     /// <summary>
@@ -145,6 +146,71 @@ public class TableSet
                 Row[Column] = NewId;
             }
         }
+    }
+
+    /// <summary>
+    /// Reserves the next item version inside the transaction and records the previous value.
+    /// Returns true when the unchanged item was modified only by assigning the version.
+    /// </summary>
+    bool PrepareRowVersion(DbTransaction Transaction, List<(DataRow Row, DataColumn Column, object Value)> PreviousValues)
+    {
+        if (string.IsNullOrWhiteSpace(fRowVersionFieldName))
+            return false;
+        DataRow Row = fItemTable.Rows[0];
+        DataColumn Column = fItemTable.Columns[fRowVersionFieldName]
+            ?? throw new InvalidOperationException($"Row version field '{fRowVersionFieldName}' was not found.");
+        if (Column.DataType != typeof(string))
+            throw new InvalidOperationException("The row version field must be a string.");
+        object Previous = Row[Column];
+        string NewVersion = Guid.NewGuid().ToString();
+        bool WasUnchanged = Row.RowState == DataRowState.Unchanged;
+        if (Row.RowState != DataRowState.Added)
+        {
+            string OldVersion = Convert.ToString(Previous);
+            if (!Guid.TryParse(OldVersion, out _))
+                throw new InvalidOperationException("The existing item must have a valid row version.");
+            DataTableDef.ValidateIdentifier(fItemTable.TableName);
+            DataTableDef.ValidateIdentifier(fItemTable.KeyField);
+            DataTableDef.ValidateIdentifier(Column.ColumnName);
+            string Prefix = SqlProvider.GlobalPrefix.ToString();
+            string Sql = $"UPDATE {fItemTable.TableName} SET {Column.ColumnName} = {Prefix}NewVersion WHERE {fItemTable.KeyField} = {Prefix}RowId AND {Column.ColumnName} = {Prefix}OldVersion";
+            SqlParams Params = new SqlParams().Add("NewVersion", NewVersion).Add("RowId", Row[fItemTable.KeyField]).Add("OldVersion", OldVersion);
+            if (fStore.ExecSql(Transaction, Sql, Params) != 1)
+                throw new RowVersionConflictException(fItemTable.TableName);
+        }
+        PreviousValues.Add((Row, Column, Previous));
+        Row[Column] = NewVersion;
+        return WasUnchanged;
+    }
+    /// <summary>
+    /// Restores Unchanged when a rolled-back version assignment was the only item change.
+    /// </summary>
+    static void RestoreUnchangedRow(DataRow Row)
+    {
+        if (Row.RowState != DataRowState.Modified)
+            return;
+        foreach (DataColumn Column in Row.Table.Columns)
+            if (!Equals(Row[Column, DataRowVersion.Current], Row[Column, DataRowVersion.Original]))
+                return;
+        Row.AcceptChanges();
+    }
+    /// <summary>
+    /// Posts the current item tree inside an existing transaction.
+    /// Reports whether an unchanged top row was modified only to assign its version.
+    /// </summary>
+    void PostItem(DbTransaction Transaction, List<(DataRow Row, DataColumn Column, object Value)> PreviousValues, out bool RestoreItemUnchanged)
+    {
+        RestoreItemUnchanged = false;
+        List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
+        CheckItemSaveTables(Tables);
+        RestoreItemUnchanged = PrepareRowVersion(Transaction, PreviousValues);
+        bool SkipUnchangedItem = RestoreItemUnchanged;
+        foreach (MemTable Table in GetDeleteOrder(Tables))
+            PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
+        foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
+            PostUpdates(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified && !(SkipUnchangedItem && ReferenceEquals(Row, fItemTable.Rows[0]))).ToArray());
+        foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
+            PostInserts(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Added).ToArray(), PreviousValues, true);
     }
 
     // ● private validation
@@ -274,8 +340,9 @@ public class TableSet
     /// <summary>
     /// Creates a table set for the specified store, list table and item table.
     /// SQL generation is disabled unless explicitly requested in the flags.
+    /// RowVersionFieldName optionally enables optimistic concurrency for item commits.
     /// </summary>
-    public TableSet(SqlStore Store, MemTable ListTable, MemTable ItemTable, TableSetFlags Flags = TableSetFlags.None)
+    public TableSet(SqlStore Store, MemTable ListTable, MemTable ItemTable, TableSetFlags Flags = TableSetFlags.None, string RowVersionFieldName = null)
     {
         ArgumentNullException.ThrowIfNull(Store);
         ArgumentNullException.ThrowIfNull(ListTable);
@@ -284,6 +351,7 @@ public class TableSet
         fListTable = ListTable;
         fItemTable = ItemTable;
         fFlags = Flags;
+        fRowVersionFieldName = RowVersionFieldName;
     }
 
     // ● list database operations
@@ -521,6 +589,9 @@ public class TableSet
     /// <summary>
     /// Saves the item tree in one transaction.
     /// Returns the outcome, ID and any exception, including failures after the database commits.
+    /// When a row version is configured,
+    /// every existing-item commit compares and replaces it, including a commit with no other changes.
+    /// A stale or deleted item produces a RowVersionConflictException in the result.
     /// </summary>
     public TableSetResult Commit(bool Reselect)
     {
@@ -532,6 +603,7 @@ public class TableSet
                 throw new InvalidOperationException("The item table must contain one active row to commit.");
 
             List<(DataRow Row, DataColumn Column, object Value)> PreviousValues = new();
+            bool RestoreItemUnchanged = false;
             fItemTable.EventsDisabled = true;
             try
             {
@@ -543,14 +615,7 @@ public class TableSet
                     {
                         NotifyTransactionStageCommit(Transaction, TransactionStage.Start, ExecTime.After);
                         NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.Before);
-                        List<MemTable> Tables = fItemTable.GetTreeAsFlatList();
-                        CheckItemSaveTables(Tables);
-                        foreach (MemTable Table in GetDeleteOrder(Tables))
-                            PostDeletes(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Deleted).ToArray());
-                        foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
-                            PostUpdates(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Modified).ToArray());
-                        foreach (MemTable Table in Tables.OrderBy(Item => Item.Level))
-                            PostInserts(Transaction, Table, Table.Rows.Cast<DataRow>().Where(Row => Row.RowState == DataRowState.Added).ToArray(), PreviousValues, true);
+                        PostItem(Transaction, PreviousValues, out RestoreItemUnchanged);
                         NotifyTransactionStageCommit(Transaction, TransactionStage.Post, ExecTime.After);
                         NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.Before);
                         Context.Commit();
@@ -579,6 +644,8 @@ public class TableSet
                                     try { PreviousValues[Index].Row[PreviousValues[Index].Column] = PreviousValues[Index].Value; }
                                     catch { /* TODO: Log identifier restoration failures. */ }
                                 }
+                                if (RestoreItemUnchanged)
+                                    RestoreUnchangedRow(fItemTable.Rows[0]);
                                 try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.After); }
                                 catch { /* TODO: Log rollback notification failures. */ }
                             }
@@ -605,7 +672,164 @@ public class TableSet
         }
         catch (Exception Error)
         {
-            return new TableSetResult(Committed ? TableSetResultStatus.AfterCommitFailed : TableSetResultStatus.CommitFailed, RowId, Error);
+            TableSetResultStatus Status = Committed ? TableSetResultStatus.AfterCommitFailed
+                : Error is RowVersionConflictException ? TableSetResultStatus.RowVersionConflict
+                : TableSetResultStatus.CommitFailed;
+            return new TableSetResult(Status, RowId, Error);
+        }
+    }
+
+    // ● batch database operations
+    /// <summary>
+    /// Posts items prepared by the callbacks in groups of transactions.
+    /// Before preparing the next item, a posted item tree is cleared; the caller
+    /// is responsible for retaining its source data for a failed group.
+    /// Confirmed progress counts posts only after their transaction commits.
+    /// </summary>
+    public BatchCommitResult CommitBatch(BatchCommitArgs Args)
+    {
+        ArgumentNullException.ThrowIfNull(Args);
+        Args.Counter = 0;
+        Args.PostCounter = 0;
+        int CommittedCount = 0;
+        int LastCommittedIteration = -1;
+        int GroupCount = 0;
+        int GroupLastIteration = -1;
+        object LastPostedId = null;
+        DataRow LastPostedRow = null;
+        SqlTransactionContext Context = null;
+        List<(DataRow Row, DataColumn Column, object Value)> PreviousValues = new();
+        List<DataRow> RestoreUnchanged = new();
+        bool CommitAttempted = false;
+        bool AfterCommitWork = false;
+        bool CommittedBeforeAfterFunc = false;
+
+        void CommitGroup()
+        {
+            if (Context == null)
+                return;
+            DbTransaction Transaction = Context.Transaction;
+            NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.Before);
+            CommitAttempted = true;
+            Context.Commit();
+            CommitAttempted = false;
+            AfterCommitWork = true;
+            CommittedCount += GroupCount;
+            LastCommittedIteration = GroupLastIteration;
+            if (LastPostedRow != null && fItemTable.Rows.IndexOf(LastPostedRow) >= 0)
+                fItemTable.AcceptChangesAll();
+            NotifyTransactionStageCommit(Transaction, TransactionStage.Commit, ExecTime.After);
+            Context.Dispose();
+            Context = null;
+            GroupCount = 0;
+            GroupLastIteration = -1;
+            PreviousValues.Clear();
+            RestoreUnchanged.Clear();
+            AfterCommitWork = false;
+        }
+
+        fItemTable.EventsDisabled = true;
+        try
+        {
+            while (true)
+            {
+                bool Posted = Args.BeforeFunc();
+                CommittedBeforeAfterFunc = false;
+                if (Posted)
+                {
+                    if (fItemTable.Rows.Count != 1 || fItemTable.Rows[0].RowState == DataRowState.Deleted)
+                        throw new InvalidOperationException("The item table must contain one active row to commit.");
+                    if (Context == null)
+                    {
+                        NotifyTransactionStageCommit(null, TransactionStage.Start, ExecTime.Before);
+                        Context = fStore.BeginTransactionContext();
+                        NotifyTransactionStageCommit(Context.Transaction, TransactionStage.Start, ExecTime.After);
+                    }
+                    NotifyTransactionStageCommit(Context.Transaction, TransactionStage.Post, ExecTime.Before);
+                    DataRow Item = fItemTable.Rows[0];
+                    bool WasUnchanged = false;
+                    try
+                    {
+                        PostItem(Context.Transaction, PreviousValues, out WasUnchanged);
+                    }
+                    finally
+                    {
+                        if (WasUnchanged)
+                            RestoreUnchanged.Add(Item);
+                    }
+                    NotifyTransactionStageCommit(Context.Transaction, TransactionStage.Post, ExecTime.After);
+                    LastPostedRow = Item;
+                    LastPostedId = Item[fItemTable.KeyField];
+                    Args.PostCounter++;
+                    GroupCount++;
+                    GroupLastIteration = Args.Counter;
+                    if (GroupCount == Args.TransLimit)
+                    {
+                        CommitGroup();
+                        CommittedBeforeAfterFunc = true;
+                    }
+                }
+                bool Continue = Args.AfterFunc(LastPostedId);
+                CommittedBeforeAfterFunc = false;
+                if (!Continue)
+                    break;
+                if (Posted)
+                    ProcessEmpty();
+                Args.Counter++;
+            }
+            CommitGroup();
+            return new BatchCommitResult(BatchCommitStatus.Success, CommittedCount, LastCommittedIteration, null);
+        }
+        catch (Exception Error)
+        {
+            bool OutcomeUnknown = CommitAttempted;
+            if (Context != null && Context.IsActive)
+            {
+                DbTransaction Transaction = Context.Transaction;
+                try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.Before); }
+                catch { /* TODO: Log rollback notification failures. */ }
+                bool RolledBack = false;
+                try
+                {
+                    Context.Rollback();
+                    RolledBack = true;
+                }
+                catch { OutcomeUnknown = true; }
+                if (RolledBack)
+                {
+                    for (int Index = PreviousValues.Count - 1; Index >= 0; Index--)
+                    {
+                        var Previous = PreviousValues[Index];
+                        if (Previous.Row.RowState != DataRowState.Detached)
+                        {
+                            try { Previous.Row[Previous.Column] = Previous.Value; }
+                            catch { /* TODO: Log value restoration failures. */ }
+                        }
+                    }
+                    foreach (DataRow Row in RestoreUnchanged)
+                    {
+                        if (Row.RowState != DataRowState.Detached)
+                        {
+                            try { RestoreUnchangedRow(Row); }
+                            catch { /* TODO: Log row state restoration failures. */ }
+                        }
+                    }
+                    try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.After); }
+                    catch { /* TODO: Log rollback notification failures. */ }
+                }
+            }
+            if (Context != null)
+            {
+                try { Context.Dispose(); }
+                catch { if (!AfterCommitWork) OutcomeUnknown = true; }
+            }
+            BatchCommitStatus Status = AfterCommitWork || CommittedBeforeAfterFunc ? BatchCommitStatus.AfterCommitFailed
+                : OutcomeUnknown ? BatchCommitStatus.TransactionOutcomeUnknown : BatchCommitStatus.Failed;
+            return new BatchCommitResult(Status, CommittedCount, LastCommittedIteration, Error);
+        }
+        finally
+        {
+            fItemTable.EventsDisabled = false;
         }
     }
 
