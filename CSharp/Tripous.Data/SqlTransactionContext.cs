@@ -75,38 +75,29 @@ public class SqlTransactionContext : IDisposable
         fIsCompleted = true;
     }
     /// <summary>
-    /// Attempts to roll back an active transaction and disposes owned resources.
+    /// Attempts to roll back an active transaction and dispose owned resources.
+    /// Cleanup failures are logged and do not escape or prevent subsequent cleanup.
     /// </summary>
     public void Dispose()
     {
         if (fIsDisposed)
             return;
         fIsDisposed = true;
-        try
-        {
-            if (fTransaction != null && !fIsCompleted)
-            {
-                try
-                {
-                    fTransaction.Rollback();
-                }
-                catch
-                {
-                    // TODO: Report rollback failures when logging is available.
-                }
-            }
-        }
-        finally
+        if (fTransaction != null && !fIsCompleted)
         {
             try
             {
-                fTransaction?.Dispose();
+                fTransaction.Rollback();
             }
-            finally
+            catch (Exception Error)
             {
-                fConnection.Dispose();
+                Sys.LogError(Error);
             }
         }
+        try { fTransaction?.Dispose(); }
+        catch (Exception Error) { Sys.LogError(Error); }
+        try { fConnection.Dispose(); }
+        catch (Exception Error) { Sys.LogError(Error); }
     }
 
     // ● properties

@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Tripous\Tripous.csproj" />
     <ProjectReference Include="..\Tripous.Data\Tripous.Data.csproj" />
+    <ProjectReference Include="..\Tripous.Logging\Tripous.Logging.csproj" />
     <ProjectReference Include="..\Tripous.RemoteOps\Tripous.RemoteOps.csproj" />
   </ItemGroup>
 

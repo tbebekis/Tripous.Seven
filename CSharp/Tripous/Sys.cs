@@ -45,7 +45,7 @@ static public class Sys
     static public void LogError(Exception Error)
     {
         ArgumentNullException.ThrowIfNull(Error);
-        UiLog(Error.Message);
+        UiLog(DebugMode ? Error.GetErrorTextFull() : Error.Message);
         try { LogExceptionProc?.Invoke(Error); }
         catch { }
     }
@@ -90,6 +90,10 @@ static public class Sys
     }
 
     // ● properties
+    /// <summary>
+    /// Gets or sets whether detailed diagnostic information is enabled.
+    /// </summary>
+    static public bool DebugMode { get; set; }
     /// <summary>
     /// Gets or sets the callback for UI log text.
     /// </summary>

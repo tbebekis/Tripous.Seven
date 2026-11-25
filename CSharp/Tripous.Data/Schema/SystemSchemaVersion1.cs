@@ -27,7 +27,7 @@ public class SystemSchemaVersion1 : SchemaVersionDef
     /// </summary>
     static DataTableDef CreateNumberSeriesTable()
     {
-        DataTableDef Table = new() { Name = "SYS_NUMBER_SERIES" };
+        DataTableDef Table = new() { Name = DbConfig.SysNumberSeriesTableName };
         Table.AddId();
         Table.AddString("Code", 40, Required: true).SetUnique();
         Table.AddString("Name", 96, Required: true).SetUnique();

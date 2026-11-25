@@ -435,9 +435,9 @@ public class TableSet
                             for (int Index = PreviousIds.Count - 1; Index >= 0; Index--)
                                 PreviousIds[Index].Row[PreviousIds[Index].Column] = PreviousIds[Index].Value;
                         }
-                        catch
+                        catch (Exception Error)
                         {
-                            // TODO: Log rollback or identifier restoration failures.
+                            Sys.LogError(Error);
                         }
                     }
                     throw;
@@ -543,18 +543,18 @@ public class TableSet
                         if (Context.IsActive)
                         {
                             try { NotifyTransactionStageDelete(Transaction, TransactionStage.Rollback, ExecTime.Before, RowId); }
-                            catch { /* TODO: Log rollback notification failures. */ }
+                            catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                             bool RolledBack = false;
                             try
                             {
                                 Context.Rollback();
                                 RolledBack = true;
                             }
-                            catch { /* TODO: Log rollback failures. */ }
+                            catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                             if (RolledBack)
                             {
                                 try { NotifyTransactionStageDelete(Transaction, TransactionStage.Rollback, ExecTime.After, RowId); }
-                                catch { /* TODO: Log rollback notification failures. */ }
+                                catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                             }
                         }
                         throw;
@@ -570,7 +570,7 @@ public class TableSet
                         fItemTable.RejectChangesAll();
                         fItemTable.RefreshDetails();
                     }
-                    catch { /* TODO: Log item restoration failures. */ }
+                    catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                 }
                 throw;
             }
@@ -629,25 +629,28 @@ public class TableSet
                         if (Context.IsActive)
                         {
                             try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.Before); }
-                            catch { /* TODO: Log rollback notification failures. */ }
+                            catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                             bool RolledBack = false;
                             try
                             {
                                 Context.Rollback();
                                 RolledBack = true;
                             }
-                            catch { /* TODO: Log rollback failures. */ }
+                            catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                             if (RolledBack)
                             {
                                 for (int Index = PreviousValues.Count - 1; Index >= 0; Index--)
                                 {
                                     try { PreviousValues[Index].Row[PreviousValues[Index].Column] = PreviousValues[Index].Value; }
-                                    catch { /* TODO: Log identifier restoration failures. */ }
+                                    catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                                 }
                                 if (RestoreItemUnchanged)
-                                    RestoreUnchangedRow(fItemTable.Rows[0]);
+                                {
+                                    try { RestoreUnchangedRow(fItemTable.Rows[0]); }
+                                    catch (Exception CleanupError) { Sys.LogError(CleanupError); }
+                                }
                                 try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.After); }
-                                catch { /* TODO: Log rollback notification failures. */ }
+                                catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                             }
                         }
                         throw;
@@ -787,14 +790,14 @@ public class TableSet
             {
                 DbTransaction Transaction = Context.Transaction;
                 try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.Before); }
-                catch { /* TODO: Log rollback notification failures. */ }
+                catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                 bool RolledBack = false;
                 try
                 {
                     Context.Rollback();
                     RolledBack = true;
                 }
-                catch { OutcomeUnknown = true; }
+                catch (Exception RollbackError) { Sys.LogError(RollbackError); OutcomeUnknown = true; }
                 if (RolledBack)
                 {
                     for (int Index = PreviousValues.Count - 1; Index >= 0; Index--)
@@ -803,7 +806,7 @@ public class TableSet
                         if (Previous.Row.RowState != DataRowState.Detached)
                         {
                             try { Previous.Row[Previous.Column] = Previous.Value; }
-                            catch { /* TODO: Log value restoration failures. */ }
+                            catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                         }
                     }
                     foreach (DataRow Row in RestoreUnchanged)
@@ -811,17 +814,17 @@ public class TableSet
                         if (Row.RowState != DataRowState.Detached)
                         {
                             try { RestoreUnchangedRow(Row); }
-                            catch { /* TODO: Log row state restoration failures. */ }
+                            catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                         }
                     }
                     try { NotifyTransactionStageCommit(Transaction, TransactionStage.Rollback, ExecTime.After); }
-                    catch { /* TODO: Log rollback notification failures. */ }
+                    catch (Exception CleanupError) { Sys.LogError(CleanupError); }
                 }
             }
             if (Context != null)
             {
                 try { Context.Dispose(); }
-                catch { if (!AfterCommitWork) OutcomeUnknown = true; }
+                catch (Exception DisposeError) { Sys.LogError(DisposeError); if (!AfterCommitWork) OutcomeUnknown = true; }
             }
             BatchCommitStatus Status = AfterCommitWork || CommittedBeforeAfterFunc ? BatchCommitStatus.AfterCommitFailed
                 : OutcomeUnknown ? BatchCommitStatus.TransactionOutcomeUnknown : BatchCommitStatus.Failed;

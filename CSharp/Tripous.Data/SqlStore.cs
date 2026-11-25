@@ -55,7 +55,38 @@ public class SqlStore
     /// </summary>
     void LogSql(DbCommand Command)
     {
-        // TODO: Log the SQL command.
+        if (!DbConfig.LogSqlStatements || Command == null || string.IsNullOrWhiteSpace(Command.CommandText))
+            return;
+        string IniTable = DbConfig.SysDbIniTableName;
+        if (!string.IsNullOrWhiteSpace(IniTable) && Command.CommandText.Contains(IniTable, StringComparison.OrdinalIgnoreCase))
+            return;
+        try
+        {
+            StringBuilder Text = new();
+            Text.AppendLine(Command.CommandText);
+            if (Sys.DebugMode)
+            {
+                Text.AppendLine();
+                Text.AppendLine("Parameters");
+                if (Command.Parameters.Count == 0)
+                    Text.AppendLine("(none)");
+                foreach (DbParameter Param in Command.Parameters)
+                {
+                    object Value = Param.Value;
+                    string Formatted = Value == null || Value == DBNull.Value ? "NULL"
+                        : Value is byte[] Bytes ? $"byte[{Bytes.Length}]"
+                        : Value is DateTime Date ? Date.ToString("yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture)
+                        : Value is bool Flag ? (Flag ? "true" : "false")
+                        : Convert.ToString(Value, System.Globalization.CultureInfo.InvariantCulture);
+                    Text.AppendLine($"{Param.ParameterName} = {Formatted}");
+                }
+            }
+            Sys.LogInfo(Text.ToString());
+        }
+        catch
+        {
+            // Logging must not prevent SQL execution.
+        }
     }
     /// <summary>
     /// Logs a failed SQL operation.

@@ -15,6 +15,11 @@ static public class DbConfig
 {
     // ● properties
     /// <summary>
+    /// Gets or sets whether SQL statements are sent to the information log.
+    /// Parameter values are included only when Sys.DebugMode is enabled.
+    /// </summary>
+    static public bool LogSqlStatements { get; set; }
+    /// <summary>
     /// Gets or sets the global maximum number of rows in a data module list.
     /// </summary>
     static public int DefaultRowLimit { get; set; } = 400;
@@ -38,6 +43,10 @@ static public class DbConfig
     /// Gets or sets the name of the system database settings table.
     /// </summary>
     static public string SysDbIniTableName { get; set; } = "SYS_INI";
+    /// <summary>
+    /// Gets or sets the system number series table name. Configure it before registering the system schema.
+    /// </summary>
+    static public string SysNumberSeriesTableName { get; set; } = "SYS_NUMBER_SERIES";
     /// <summary>
     /// Gets or sets the key field name of the system settings table.
     /// </summary>

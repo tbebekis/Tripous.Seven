@@ -2,5 +2,6 @@
   <Project Path="Tripous.Tests/Tripous.Tests.csproj" />
   <Project Path="Tripous/Tripous.csproj" />
   <Project Path="Tripous.Data/Tripous.Data.csproj" />
+  <Project Path="Tripous.Logging/Tripous.Logging.csproj" />
   <Project Path="Tripous.RemoteOps/Tripous.RemoteOps.csproj" />
 </Solution>

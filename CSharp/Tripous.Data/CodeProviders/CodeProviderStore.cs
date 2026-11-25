@@ -24,11 +24,13 @@ public class CodeProviderStore
         ArgumentException.ThrowIfNullOrWhiteSpace(Name);
         if (Transaction.Connection is not SqliteConnection)
             throw new NotSupportedException("Code provider reservations are currently supported only for SQLite.");
+        string TableName = DbConfig.SysNumberSeriesTableName;
+        DataTableDef.ValidateIdentifier(TableName);
         SqlParams Key = new SqlParams().Add("Code", Name);
-        int Locked = Store.ExecSql(Transaction, "UPDATE SYS_NUMBER_SERIES SET NextNumber = NextNumber WHERE Code = :Code", Key);
+        int Locked = Store.ExecSql(Transaction, $"UPDATE {TableName} SET NextNumber = NextNumber WHERE Code = :Code", Key);
         if (Locked != 1)
             throw new InvalidOperationException($"Number series '{Name}' was not found.");
-        DataRow Row = Store.Select(Transaction, "SELECT Pattern, ResetPeriodId, NextNumber, LastResetValue, IsActive FROM SYS_NUMBER_SERIES WHERE Code = :Code", Key).Rows[0];
+        DataRow Row = Store.Select(Transaction, $"SELECT Pattern, ResetPeriodId, NextNumber, LastResetValue, IsActive FROM {TableName} WHERE Code = :Code", Key).Rows[0];
         if (Convert.ToInt32(Row["IsActive"]) == 0)
             throw new InvalidOperationException($"Number series '{Name}' is inactive.");
         CodeProviderEntry Entry = new(Convert.ToString(Row["Pattern"]), (ResetPeriod)Convert.ToInt32(Row["ResetPeriodId"]));
@@ -39,7 +41,7 @@ public class CodeProviderStore
         string Result = Entry.Format(Date, Number);
         int NextNumber = checked(Number + 1);
         SqlParams Params = new SqlParams().Add("Code", Name).Add("NextNumber", NextNumber).Add("LastResetValue", string.IsNullOrEmpty(Marker) ? PreviousMarker : Marker);
-        Store.ExecSql(Transaction, "UPDATE SYS_NUMBER_SERIES SET NextNumber = :NextNumber, LastResetValue = :LastResetValue WHERE Code = :Code", Params);
+        Store.ExecSql(Transaction, $"UPDATE {TableName} SET NextNumber = :NextNumber, LastResetValue = :LastResetValue WHERE Code = :Code", Params);
         return Result;
     }
 }
