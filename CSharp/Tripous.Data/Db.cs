@@ -15,6 +15,10 @@ static public class Db
 {
     // ● static public
     /// <summary>
+    /// Ensures the data library is loaded for application type discovery.
+    /// </summary>
+    static public void Initialize() { }
+    /// <summary>
     /// Returns a named connection or throws if it is not registered.
     /// </summary>
     static public DbConnectionInfo GetConnectionInfo(string Name) => Connections.Get(Name);

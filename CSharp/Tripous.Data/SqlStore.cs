@@ -60,9 +60,32 @@ public class SqlStore
     /// <summary>
     /// Logs a failed SQL operation.
     /// </summary>
-    void Log(Exception Error, string SqlText, SqlParams Params)
+    void Log(Exception Error, string SqlText, SqlParams Params, DataTable Table = null)
     {
-        // TODO: Log the exception and operation details.
+        try
+        {
+            Error.Data["SQL Statement"] = SqlText ?? string.Empty;
+            foreach (SqlParam Param in Params.Items)
+                Error.Data[$"Parameter: {Param.Name}"] = Param.Value is byte[] Bytes ? $"byte[{Bytes.Length}]" : Param.Value ?? DBNull.Value;
+            if (Table != null)
+            {
+                DataRow[] Errors = Table.GetErrors();
+                for (int Index = 0; Index < Math.Min(Errors.Length, 5); Index++)
+                {
+                    DataRow Row = Errors[Index];
+                    StringBuilder Details = new();
+                    Details.AppendLine(Row.RowError);
+                    foreach (DataColumn Column in Row.GetColumnsInError())
+                        Details.AppendLine($"{Column.ColumnName}: {Row.GetColumnError(Column)}");
+                    Error.Data[$"Table error {Index + 1}"] = Details.ToString();
+                }
+            }
+        }
+        catch
+        {
+            // Logging details must not replace the original database exception.
+        }
+        Sys.LogError(Error);
     }
 
     // ● constructor
@@ -197,7 +220,7 @@ public class SqlStore
         }
         catch (Exception Error)
         {
-            Log(Error, SqlText, Params);
+            Log(Error, SqlText, Params, Table);
             throw;
         }
     }

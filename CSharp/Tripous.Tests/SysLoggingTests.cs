@@ -11,6 +11,7 @@ namespace Tripous.Tests;
 /// <summary>
 /// Tests the optional logging callbacks exposed by Sys.
 /// </summary>
+[Collection("Sys logging")]
 public class SysLoggingTests
 {
     // ● public

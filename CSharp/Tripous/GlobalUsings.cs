@@ -9,7 +9,6 @@
 global using System.Data;
 global using System.Data.Common;
 global using System.Text;
-global using Microsoft.Data.Sqlite;
 global using System.Collections;
 global using System.Collections.ObjectModel;
 global using System.Collections.Specialized;
@@ -21,4 +20,3 @@ global using System.Text.Json.Serialization;
 global using System.Text.Encodings.Web;
 global using System.Text.Json.Serialization.Metadata;
 global using System.Text.Json.Nodes;
-global using Tripous.Data;

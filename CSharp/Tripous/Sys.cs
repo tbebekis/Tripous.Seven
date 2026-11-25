@@ -15,6 +15,10 @@ static public class Sys
 {
     // ● static public
     /// <summary>
+    /// Ensures the core library is loaded for application type discovery.
+    /// </summary>
+    static public void Initialize() { }
+    /// <summary>
     /// Returns the path of a file in the configured application folder.
     /// </summary>
     static public string GetAppFilePath(string FileName)
