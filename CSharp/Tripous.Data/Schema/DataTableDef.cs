@@ -50,6 +50,26 @@ public class DataTableDef : BaseDef
 
     // ● public
     /// <summary>
+    /// Creates the standard lookup schema with a primary key and a unique name.
+    /// Optional code values are unique, and an optional active flag defaults to 1.
+    /// </summary>
+    static public DataTableDef CreateLookup(string TableName, bool WithCode = false, bool WithIsActive = false, DataFieldType? KeyType = null)
+    {
+        ValidateIdentifier(TableName);
+        DataTableDef Table = new() { Name = TableName };
+        DataFieldType EffectiveKeyType = KeyType ?? DbConfig.DefaultPrimaryKeyType;
+        if (EffectiveKeyType is not (DataFieldType.String or DataFieldType.Integer or DataFieldType.Int64))
+            throw new ArgumentException("A lookup key must be String, Integer or Int64.", nameof(KeyType));
+        Table.AddId().DataType = EffectiveKeyType;
+        if (WithCode)
+            Table.AddString("Code", 40, Required: true).SetUnique();
+        Table.AddString("Name", 96, Required: true).SetUnique();
+        if (WithIsActive)
+            Table.AddBoolean("IsActive", Required: true, DefaultExpression: "1");
+        return Table;
+    }
+
+    /// <summary>
     /// Returns a CREATE TABLE statement containing Tripous SQL type placeholders.
     /// </summary>
     public string GetDefText()

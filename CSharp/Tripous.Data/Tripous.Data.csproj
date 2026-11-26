@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Metadata/Resources/Sql/**/*.sql" />
+    <EmbeddedResource Include="Registry/SqlFilterExpressions.txt" LogicalName="Tripous.Data.SqlFilterExpressions.txt" />
   </ItemGroup>
 
 </Project>

@@ -103,6 +103,20 @@ public class DataModule
 
     // ● code provider
     /// <summary>
+    /// Selects the code provider for a new item with an empty configured code field.
+    /// A derived module can select a different registered series, for example for drafts.
+    /// Returning null skips code generation for this insert.
+    /// </summary>
+    protected virtual CodeProviderDef GetCodeProviderDef() => DataRegistry.CodeProviders.Get(ModuleDef.CodeProvider);
+
+    /// <summary>
+    /// Reserves and formats the next code for the selected provider inside the commit transaction.
+    /// Override this to customize the generated code while keeping the standard assignment and rollback handling.
+    /// </summary>
+    protected virtual string GetNextCodeLocked(DbTransaction Transaction, CodeProviderDef Provider)
+        => new CodeProviderStore().GetNextCode(Store, Transaction, Provider.Name, DateTime.Today);
+
+    /// <summary>
     /// Assigns a registered code provider's value to a new item with an empty code field.
     /// The series update uses the commit transaction.
     /// </summary>
@@ -114,8 +128,10 @@ public class DataModule
         DataColumn Column = ItemTable.Columns[ModuleDef.CodeFieldName] ?? throw new InvalidOperationException($"Code field '{ModuleDef.CodeFieldName}' was not found.");
         if (Row.RowState != DataRowState.Added || !string.IsNullOrWhiteSpace(Convert.ToString(Row[Column])))
             return;
-        CodeProviderDef Provider = DataRegistry.CodeProviders.Get(ModuleDef.CodeProvider);
-        string Code = new CodeProviderStore().GetNextCode(Store, Transaction, Provider.Name, DateTime.Today);
+        CodeProviderDef Provider = GetCodeProviderDef();
+        if (Provider == null)
+            return;
+        string Code = GetNextCodeLocked(Transaction, Provider);
         fGeneratedCodeRow = Row;
         fGeneratedCodeColumn = Column;
         fGeneratedCodePreviousValue = Row[Column];
@@ -246,6 +262,12 @@ public class DataModule
         }
     }
 
+    /// <summary>
+    /// Returns the registered module name for diagnostics.
+    /// Before initialization, returns the CLR type name.
+    /// </summary>
+    public override string ToString() => ModuleDef?.Name ?? base.ToString();
+
     // ● initialization
     /// <summary>
     /// Binds a user context before running module initialization.
@@ -254,6 +276,8 @@ public class DataModule
     {
         if (ModuleDef != null)
             throw new InvalidOperationException("The data module is already initialized.");
+        ArgumentNullException.ThrowIfNull(Definition);
+        Definition.CheckAccess(Context);
         UserContext = Context;
         try
         {
@@ -267,6 +291,56 @@ public class DataModule
         }
     }
     /// <summary>
+    /// Completes the module's item table definitions from a snapshot of database table metadata.
+    /// The supplied definition belongs to the module being initialized.
+    /// </summary>
+    protected virtual void UpdateTableSchema(ModuleDef Definition, SqlStore Store)
+    {
+        DbSchema Schema = DbSchemaLoader.Load(Store.Schema.ConnectionInfo);
+        List<TableDef> Tables = Definition.GetTables();
+        HashSet<FieldDef> InferredFields = new(ReferenceEqualityComparer.Instance);
+        foreach (TableDef Table in Tables)
+        {
+            DbMetaTable Source = Schema.Tables.SingleOrDefault(Item =>
+                string.Equals(Item.Name, Table.Name, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"Table '{Table.Name}' was not found in database metadata.");
+            Table.UpdateFrom(Source, Store, InferredFields);
+        }
+
+        // An inferred field can link more than one table. Propagate the width through the tree
+        // before validating it, leaving any conflicting explicit declarations for validation.
+        bool Changed;
+        do
+        {
+            Changed = false;
+            foreach (TableDef Table in Tables)
+            {
+                foreach (TableDef Detail in Table.Details)
+                {
+                    (FieldDef Master, FieldDef Child) = Table.GetRelationFields(Detail);
+                    Changed |= MatchIntegerWidth(Master, Child);
+                    Changed |= MatchIntegerWidth(Child, Master);
+                }
+            }
+        } while (Changed);
+
+        bool MatchIntegerWidth(FieldDef Source, FieldDef Target)
+        {
+            if (Source?.DataType != DataFieldType.Integer || Target?.DataType != DataFieldType.Int64
+                || !InferredFields.Contains(Target))
+                return false;
+
+            Target.DataType = DataFieldType.Integer;
+            return true;
+        }
+    }
+    /// <summary>
+    /// Loads application defaults, such as the default company or currency, after the module is set up.
+    /// Derived modules can cache these values for use when assigning defaults to new rows.
+    /// </summary>
+    protected virtual void LoadDefaultValues() { }
+
+    /// <summary>
     /// Initializes the module from its definition and configured connection.
     /// Throws if this instance was already successfully initialized.
     /// </summary>
@@ -275,9 +349,20 @@ public class DataModule
         if (ModuleDef != null)
             throw new InvalidOperationException("The data module is already initialized.");
         ArgumentNullException.ThrowIfNull(Definition);
-        Definition.CheckDescriptor();
-
-        SqlStore NewStore = SqlStores.CreateSqlStore(Definition.ConnectionName);
+        Definition.CheckAccess(UserContext);
+        SqlStore NewStore;
+        if (DbConfig.AllowUpdatingTableSchema)
+        {
+            Definition = (ModuleDef)Json.Deserialize(Json.Serialize(Definition), Definition.GetType());
+            NewStore = SqlStores.CreateSqlStore(Definition.ConnectionName);
+            UpdateTableSchema(Definition, NewStore);
+            Definition.CheckDescriptor();
+        }
+        else
+        {
+            Definition.CheckDescriptor();
+            NewStore = SqlStores.CreateSqlStore(Definition.ConnectionName);
+        }
         TableList NewTables = new();
         foreach (TableDef TableDef in Definition.GetTables())
         {
@@ -317,7 +402,6 @@ public class DataModule
         TableList NewStocks = new();
         foreach (SelectDef StockDef in Definition.Stocks)
         {
-            StockDef.CheckDescriptor();
             string SqlText = StockDef.SqlText;
             if (string.IsNullOrWhiteSpace(SqlText))
             {
@@ -336,8 +420,14 @@ public class DataModule
 
         if (Definition.SelectList.Count == 0)
         {
-            SelectDef DefaultSelect = Definition.SelectList.Add("DEFAULT", $"select * from {Definition.Table.Name}");
-            DefaultSelect.Owner = Definition;
+            SelectDef DefaultSelect = new()
+            {
+                Name = "DEFAULT",
+                SqlText = $"select * from {Definition.Table.Name}",
+                Owner = Definition
+            };
+            DefaultSelect.CheckDescriptor();
+            Definition.SelectList.Add(DefaultSelect);
         }
 
         Store = NewStore;
@@ -347,6 +437,21 @@ public class DataModule
         ListTable = NewListTable;
         TableSet = NewTableSet;
         ModuleDef = Definition;
+        try
+        {
+            LoadDefaultValues();
+        }
+        catch
+        {
+            ModuleDef = null;
+            TableSet = null;
+            Store = null;
+            Tables = null;
+            Stocks = null;
+            ItemTable = null;
+            ListTable = null;
+            throw;
+        }
     }
 
     // ● list
@@ -599,10 +704,21 @@ public class DataModule
             DataFieldType.Int64 => Convert.ToInt64(Value, Culture),
             DataFieldType.Decimal or DataFieldType.Decimal_ => Convert.ToDecimal(Value, Culture),
             DataFieldType.Double => Convert.ToDouble(Value, Culture),
-            DataFieldType.Boolean => bool.TryParse(Convert.ToString(Value, Culture), out bool Flag) ? (Flag ? 1 : 0) : (Convert.ToInt32(Value, Culture) != 0 ? 1 : 0),
+            DataFieldType.Boolean => ConvertSelectFilterBoolean(Value),
             DataFieldType.Date or DataFieldType.DateTime => Convert.ToDateTime(Value, Culture),
             _ => throw new InvalidOperationException($"Unsupported filter data type: {DataType}"),
         };
+    }
+    /// <summary>
+    /// Converts a Boolean list filter value to the database representation, 0 or 1.
+    /// Derived modules can accept additional input formats by overriding this method.
+    /// </summary>
+    protected virtual int ConvertSelectFilterBoolean(object Value)
+    {
+        var Culture = System.Globalization.CultureInfo.InvariantCulture;
+        if (bool.TryParse(Convert.ToString(Value, Culture), out bool Flag))
+            return Flag ? 1 : 0;
+        return Convert.ToInt32(Value, Culture) != 0 ? 1 : 0;
     }
     /// <summary>
     /// Returns the condition operators allowed for a filter data type.
@@ -670,7 +786,30 @@ public class DataModule
         }
         return Result;
     }
+   
+    /// <summary>
+    /// Prepares a registered list SELECT for execution with the requested filters.
+    /// With no active filters, returns the registered SQL as written. Otherwise,
+    /// wraps it in an outer SELECT and applies the filters to its result columns.
+    /// Filter values go in Params and are bound when the query runs.
+    /// ListSelect executes the returned SQL and applies the global row limit.
+    /// </summary>
+    protected virtual string BuildListSelectSql(SelectDef Select, JsonSelectFilters Filters, out SqlParams Params)
+    {
+        if (string.IsNullOrWhiteSpace(Select.SqlText))
+            throw new InvalidOperationException($"List SELECT '{Select.Name}' has no SQL statement.");
+        SqlFilterDefs ActiveFilters = CreateSelectFilters(Select, Filters);
+        Params = new();
+        if (ActiveFilters.Count == 0)
+            return Select.SqlText;
 
+        // Validate the original statement before it becomes a nested query.
+        Store.ApplyRowLimit(Select.SqlText, DbConfig.DefaultRowLimit);
+        string Where = SqlWhereFilterFormatter.FormatParameterized(ActiveFilters, Params, Select.SqlText);
+        string InnerSql = SqlTextScanner.PrepareSubquery(Select.SqlText);
+        return $"select * from ({InnerSql}) X where {Where}";
+    }
+    
     // ● batch operations
     /// <summary>
     /// Posts items prepared by the callbacks in groups of transactions. Each post
@@ -793,21 +932,12 @@ public class DataModule
         LastTableSetResult = null;
         SelectDef Select = GetListSelectDef(SelectName);
         SelectedName = Select.Name;
-        if (string.IsNullOrWhiteSpace(Select.SqlText))
-            throw new InvalidOperationException($"List SELECT '{SelectedName}' has no SQL statement.");
-        SqlFilterDefs ActiveFilters = CreateSelectFilters(Select, Filters);
-        if (ActiveFilters.Count == 0)
+        string SqlText = BuildListSelectSql(Select, Filters, out SqlParams Params);
+        if (Params.Count == 0 && SqlText == Select.SqlText)
             ListSelect(Select);
         else
-        {
-            // Validate the original statement before it becomes a nested query.
-            Store.ApplyRowLimit(Select.SqlText, DbConfig.DefaultRowLimit);
-            SqlParams Params = new();
-            string Where = SqlWhereFilterFormatter.FormatParameterized(ActiveFilters, Params, Select.SqlText);
-            string InnerSql = SqlTextScanner.PrepareSubquery(Select.SqlText);
-            ListSelect($"select * from ({InnerSql}) X where {Where}", Params);
-        }
-        return new JsonDataTable(ListTable);
+            ListSelect(SqlText, Params);
+        return new JsonDataTable(ListTable, Select: Select);
     }
     /// <summary>
     /// Loads an item by text ID and returns its module packet.
@@ -865,11 +995,22 @@ public class DataModule
     /// </summary>
     public virtual MemTable FindTable(string TableName) => Tables.Find(TableName);
     /// <summary>
+    /// Returns whether the item tree contains a table with the specified name.
+    /// </summary>
+    public bool TableExists(string TableName) => FindTable(TableName) != null;
+
+    /// <summary>
     /// Gets an item table by name, or throws when it does not exist.
     /// </summary>
     public virtual MemTable GetTable(string TableName) => Tables.Get(TableName);
 
     // ● properties
+    /// <summary>
+    /// Gets an item tree table by name, including the top table and its details.
+    /// Use <see cref="ListTable"/> and <see cref="Stocks"/> to access the other tables.
+    /// </summary>
+    public MemTable this[string TableName] => GetTable(TableName);
+
     /// <summary>
     /// Gets the session or request context supplied during initialization.
     /// </summary>
@@ -886,6 +1027,12 @@ public class DataModule
     /// Gets the name of the initialized module.
     /// </summary>
     public string Name => ModuleDef.Name;
+    /// <summary>
+    /// Gets the item table as a row provider host for the initialized module.
+    /// Consumers can use this host to obtain a row provider for the item and its details.
+    /// </summary>
+    public IRowProviderHost RowProviderHost => ItemTable;
+
     /// <summary>
     /// Gets the current item row without changing the selection.
     /// </summary>
@@ -951,6 +1098,16 @@ public class DataModule
     /// Gets the top table of the item tree.
     /// </summary>
     public MemTable ItemTable { get; private set; }
+    /// <summary>
+    /// Gets or sets the item tree's master-detail synchronization state after initialization.
+    /// This forwards to ItemTable.DetailsActive, which counts activations.
+    /// Pair each additional activation with a corresponding deactivation.
+    /// </summary>
+    public bool DetailsActive
+    {
+        get => ItemTable.DetailsActive;
+        set => ItemTable.DetailsActive = value;
+    }
     /// <summary>
     /// Gets the separate list table.
     /// </summary>

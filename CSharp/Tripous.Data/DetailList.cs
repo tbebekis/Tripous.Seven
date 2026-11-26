@@ -30,6 +30,18 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
             Detail.Details.CheckSubtree();
         }
     }
+    /// <summary>
+    /// Uses the master's text comparison settings before synchronizing the detail.
+    /// String keys are then compared with the same locale and case sensitivity.
+    /// </summary>
+    void ActivateDetail(MemTable Detail)
+    {
+        Detail.Locale = fMaster.Locale;
+        Detail.CaseSensitive = fMaster.CaseSensitive;
+        Detail.Details.Active = true;
+        Detail.MasterRowChanged();
+    }
+
     // ● internal
     /// <summary>
     /// Checks whether a detail can be added without changing either table.
@@ -72,13 +84,15 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
         if (Active)
         {
             foreach (MemTable Detail in this)
-                Detail.UpdateFromMaster();
+                Detail.MasterRowChanged();
         }
     }
 
     // ● overrides
     /// <summary>
     /// Connects an eligible detail table to the master.
+    /// If the relationship is already active, validates the new branch before attaching
+    /// it and synchronizes it with the current master row after attachment.
     /// </summary>
     protected override void InsertItem(int Index, MemTable Detail)
     {
@@ -88,10 +102,7 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
             Detail.EventsDisabled = true;
         Detail.SetMaster(fMaster);
         if (Active)
-        {
-            Detail.Details.Active = true;
-            Detail.UpdateFromMaster();
-        }
+            ActivateDetail(Detail);
     }
     /// <summary>
     /// Disconnects a detail while preserving its own detail relationships.
@@ -160,6 +171,9 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
     // ● properties
     /// <summary>
     /// Activates or deactivates the relationships using a nested counter.
+    /// Create the master and detail columns before the first activation.
+    /// The first activation synchronizes the detail views. The final deactivation
+    /// removes their master filters.
     /// </summary>
     public bool Active
     {
@@ -173,10 +187,7 @@ public class DetailList : System.Collections.ObjectModel.Collection<MemTable>
                     CheckSubtree();
                     fActiveCount++;
                     foreach (MemTable Detail in this)
-                    {
-                        Detail.Details.Active = true;
-                        Detail.UpdateFromMaster();
-                    }
+                        ActivateDetail(Detail);
                 }
                 else
                     fActiveCount++;

@@ -64,10 +64,30 @@ public class CodeProviderCommitTests
         }
     }
     /// <summary>
+    /// Selects an alternate series for automatic code generation.
+    /// </summary>
+    public class AlternateCodeModule : DataModule
+    {
+        /// <summary>
+        /// Returns the registered alternate provider associated with the module.
+        /// </summary>
+        protected override CodeProviderDef GetCodeProviderDef()
+            => DataRegistry.CodeProviders.Get(ModuleDef.CodeProvider + "-alternate");
+
+        /// <summary>
+        /// Prefixes codes generated for the alternate series.
+        /// </summary>
+        protected override string GetNextCodeLocked(DbTransaction Transaction, CodeProviderDef Provider)
+            => "D-" + base.GetNextCodeLocked(Transaction, Provider);
+    }
+
+    /// <summary>
     /// A remote commit returns the generated code and can be retried after rollback.
     /// </summary>
-    [Fact]
-    public void RemoteCommitReturnsGeneratedCode()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RemoteCommitReturnsGeneratedCode(bool UseAlternateProvider)
     {
         string ConnectionName = $"codes-{Guid.NewGuid():N}";
         string ModuleName = $"module-{Guid.NewGuid():N}";
@@ -76,6 +96,12 @@ public class CodeProviderCommitTests
         DbConnectionInfo Info = new() { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" };
         CodeProviderDef Provider = new() { Name = ProviderName };
         ModuleDef Definition = new() { Name = ModuleName, ConnectionName = ConnectionName, CodeProvider = ProviderName, CodeFieldName = "OrderNumber" };
+        CodeProviderDef SelectedProvider = Provider;
+        if (UseAlternateProvider)
+        {
+            Definition.ClassName = typeof(AlternateCodeModule).AssemblyQualifiedName;
+            SelectedProvider = new() { Name = ProviderName + "-alternate" };
+        }
         Definition.Table.Name = "Customer";
         Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
         Definition.Table.Fields.Add(new FieldDef { Name = "OrderNumber" });
@@ -84,11 +110,13 @@ public class CodeProviderCommitTests
         {
             Db.Connections.Add(Info);
             DataRegistry.CodeProviders.Add(Provider);
+            if (UseAlternateProvider)
+                DataRegistry.CodeProviders.Add(SelectedProvider);
             DataRegistry.Modules.Add(Definition);
             SystemSchema.Register(ConnectionName).Execute();
             SqlStore Store = new(Info);
             Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, OrderNumber TEXT NOT NULL, Name TEXT NOT NULL)");
-            Store.ExecSql("INSERT INTO SYS_NUMBER_SERIES (Id, Code, Name, Pattern) VALUES (:Id, :Code, :Name, :Pattern)", new SqlParams().Add("Id", Guid.NewGuid().ToString()).Add("Code", ProviderName).Add("Name", ProviderName).Add("Pattern", "C-{XXXX}"));
+            Store.ExecSql("INSERT INTO SYS_NUMBER_SERIES (Id, Code, Name, Pattern) VALUES (:Id, :Code, :Name, :Pattern)", new SqlParams().Add("Id", Guid.NewGuid().ToString()).Add("Code", SelectedProvider.Name).Add("Name", SelectedProvider.Name).Add("Pattern", "C-{XXXX}"));
             RemOp.Initialize();
             DataModule Input = Definition.Create();
             Input.Insert();
@@ -109,13 +137,16 @@ public class CodeProviderCommitTests
             JsonDataTable Table = Assert.Single(Assert.IsType<JsonDataModule>(Success["DataModule"]).Tables);
             int Index = Table.Columns.FindIndex(Column => Column.Name == "OrderNumber");
             Assert.True(Index >= 0);
-            Assert.Equal("C-0001", Assert.Single(Table.Rows).Data[Index]);
-            Assert.Equal("C-0001", Store.Select("SELECT OrderNumber FROM Customer").Rows[0][0]);
+            string ExpectedCode = UseAlternateProvider ? "D-C-0001" : "C-0001";
+            Assert.Equal(ExpectedCode, Assert.Single(Table.Rows).Data[Index]);
+            Assert.Equal(ExpectedCode, Store.Select("SELECT OrderNumber FROM Customer").Rows[0][0]);
             Assert.Equal(2L, Convert.ToInt64(Store.Select("SELECT NextNumber FROM SYS_NUMBER_SERIES").Rows[0][0]));
         }
         finally
         {
             DataRegistry.Modules.Remove(Definition);
+            if (UseAlternateProvider)
+                DataRegistry.CodeProviders.Remove(SelectedProvider);
             DataRegistry.CodeProviders.Remove(Provider);
             Schema Schema = Schemas.Find("System", ConnectionName);
             if (Schema != null)

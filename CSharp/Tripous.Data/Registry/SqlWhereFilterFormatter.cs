@@ -40,11 +40,7 @@ static public class SqlWhereFilterFormatter
         foreach (SqlFilterDef Filter in Filters)
         {
             ArgumentNullException.ThrowIfNull(Filter);
-            Filter.CheckDescriptor();
-            if (string.IsNullOrWhiteSpace(Filter.FieldName))
-                throw new InvalidOperationException("A filter field name is required.");
-            if (Filter.ConditionOp != ConditionOp.Null && (Filter.Value == null || Filter.Value == DBNull.Value))
-                throw new InvalidOperationException($"Filter '{Filter.Name}' requires a value.");
+            Filter.CheckDescriptorWithValues();
             string Field = Filter.FieldName;
             string Condition;
             switch (Filter.ConditionOp)
@@ -65,15 +61,11 @@ static public class SqlWhereFilterFormatter
                     Condition = $"{Field} like {AddParam(Text)}";
                     break;
                 case ConditionOp.Between:
-                    if (Filter.Value2 == null || Filter.Value2 == DBNull.Value)
-                        throw new InvalidOperationException($"Filter '{Filter.Name}' requires two values.");
                     Condition = $"{Field} between {AddParam(Filter.Value)} and {AddParam(Filter.Value2)}";
                     break;
                 case ConditionOp.In:
-                    if (Filter.Value is not IEnumerable Values || Filter.Value is string)
-                        throw new InvalidOperationException($"Filter '{Filter.Name}' requires a collection.");
                     List<string> Parameters = new();
-                    foreach (object Value in Values)
+                    foreach (object Value in (IEnumerable)Filter.Value)
                         Parameters.Add(AddParam(Value));
                     if (Parameters.Count == 0)
                         throw new InvalidOperationException($"Filter '{Filter.Name}' requires a non-empty collection.");

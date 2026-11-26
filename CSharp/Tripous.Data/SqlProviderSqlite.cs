@@ -13,6 +13,32 @@ namespace Tripous.Data;
 /// </summary>
 public class SqlProviderSqlite : SqlProvider
 {
+    /// <summary>
+    /// Maps a SQLite column declaration to an item field type.
+    /// SQLite integers can hold signed 64-bit values.
+    /// </summary>
+    internal override DataFieldType GetMetadataFieldType(DbMetaColumn Column)
+    {
+        string Declaration = Column.DataType.Split('(', 2)[0].Trim().ToUpperInvariant();
+        if (Declaration.Contains("INT"))
+            return DataFieldType.Int64;
+        if (Declaration.Contains("CHAR") || Declaration.Contains("CLOB") || Declaration.Contains("TEXT"))
+            return DataFieldType.String;
+        if (Declaration.Length == 0)
+            throw new NotSupportedException($"Column '{Column.Name}' has no declared SQLite type. Specify its FieldDef explicitly.");
+        if (Declaration.Contains("BLOB"))
+            return DataFieldType.Blob;
+        if (Declaration.Contains("REAL") || Declaration.Contains("FLOA") || Declaration.Contains("DOUB"))
+            return DataFieldType.Double;
+        return Declaration switch
+        {
+            "DATE" => DataFieldType.Date,
+            "DATETIME" or "TIMESTAMP" => DataFieldType.DateTime,
+            "BOOL" or "BOOLEAN" => DataFieldType.Boolean,
+            _ => DataFieldType.Decimal,
+        };
+    }
+
     // ● constructor
     internal SqlProviderSqlite()
     {

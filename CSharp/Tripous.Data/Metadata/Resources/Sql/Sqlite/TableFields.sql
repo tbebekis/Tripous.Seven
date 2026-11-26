@@ -13,7 +13,12 @@ select
         ) then 0
         else 1
     end                                                 as IsNullable,
-    0                                                   as SizeInChars,
+    case
+        when instr(upper(ti.type), 'CHAR') > 0
+            and instr(ti.type, '(') > 0 and instr(ti.type, ')') > instr(ti.type, '(')
+        then cast(substr(ti.type, instr(ti.type, '(') + 1, instr(ti.type, ')') - instr(ti.type, '(') - 1) as integer)
+        else 0
+    end                                                 as SizeInChars,
     0                                                   as SizeInBytes,
     0                                                   as DecimalPrecision,
     0                                                   as DecimalScale,

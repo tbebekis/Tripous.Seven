@@ -92,10 +92,14 @@ public class JsonDataTable
     /// <summary>
     /// Creates a table packet, using field definitions for logical column types when available.
     /// </summary>
-    public JsonDataTable(DataTable Source, TableDef Definition = null)
+    public JsonDataTable(DataTable Source, TableDef Definition = null, SelectDef Select = null)
     {
         ArgumentNullException.ThrowIfNull(Source);
         Name = Source.TableName;
+        IsOneToOne = Definition?.IsOneToOne ?? false;
+        IsUiVisible = Definition?.IsUiVisible ?? true;
+        if (Definition?.FieldGroups != null)
+            FieldGroups.AddRange(Definition.FieldGroups);
         if (Source is MemTable Table)
         {
             KeyField = Table.KeyField;
@@ -116,8 +120,18 @@ public class JsonDataTable
         foreach (DataColumn Column in Source.Columns)
         {
             FieldDef Field = Definition?.FindColumnField(Column.ColumnName);
-            Columns.Add(new JsonDataColumn(Column, Field,
-                IncludeDefault: Field == null || ReferenceEquals(Definition.Fields.Find(Column.ColumnName), Field)));
+            bool IsJoinColumn = Field != null && !ReferenceEquals(Definition.FindField(Column.ColumnName), Field);
+            JsonDataColumn Packet = new(Column, Field, IncludeDefault: !IsJoinColumn);
+            if (IsJoinColumn)
+                Packet.IsNullable = true;
+            if (Select?.DisplayLabels?.TryGetValue(Column.ColumnName, out string TitleKey) == true)
+            {
+                Packet.TitleKey = TitleKey;
+                Packet.Title = Texts.L(TitleKey);
+            }
+            if (Select?.ColumnTypes?.TryGetValue(Column.ColumnName, out DataColumnType ColumnType) == true)
+                Packet.ColumnType = (int)ColumnType;
+            Columns.Add(Packet);
         }
         foreach (DataRow Row in Source.Rows)
         {
@@ -199,9 +213,24 @@ public class JsonDataTable
     /// </summary>
     public bool AutoGenerateGuidKeys { get; set; } = true;
     /// <summary>
+    /// Gets or sets whether a client should present this detail as a single row per master.
+    /// For example, StoreTrade and FinTrade can each be shown as one row of a Trade.
+    /// The value comes from <see cref="TableDef.IsOneToOne"/>.
+    /// </summary>
+    public bool IsOneToOne { get; set; }
+    /// <summary>
+    /// Gets or sets whether a client should display this table.
+    /// </summary>
+    public bool IsUiVisible { get; set; } = true;
+    /// <summary>
     /// Gets or sets the names of direct detail tables.
     /// </summary>
     public List<string> Details { get; set; } = new();
+    /// <summary>
+    /// Gets or sets the preferred display order of field groups from the table definition.
+    /// Column packets identify their group through <see cref="JsonDataColumn.Group"/>.
+    /// </summary>
+    public List<string> FieldGroups { get; set; } = new();
     /// <summary>
     /// Gets or sets the column descriptions in row value order.
     /// </summary>

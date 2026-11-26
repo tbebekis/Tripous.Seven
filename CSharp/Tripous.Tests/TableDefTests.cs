@@ -52,7 +52,11 @@ public class TableDefTests
         TableDef Product = Definition.AddJoin("ProductId", "Products", "Product");
         Product.Fields.Add(new FieldDef { Name = "Name" });
         Product.Fields.Add(new FieldDef { Name = "CategoryId" });
-        Product.Fields.Add(new FieldDef { Name = "Active", DataType = DataFieldType.Integer, Flags = FieldFlags.Boolean, DefaultValue = "1" });
+        Product.Fields.Add(new FieldDef
+        {
+            Name = "Active", DataType = DataFieldType.Integer, Flags = FieldFlags.Boolean,
+            DefaultValue = "1", DisplayWidth = 80, TitleKey = "ProductActive", ToolTip = "Active product", IsNullable = false
+        });
         Product.AddJoin("CategoryId", "Categories", "Category").Fields.Add(new FieldDef { Name = "Title", Alias = "CategoryTitle" });
         Definition.AddJoin("ProductId", "Products", "OtherProduct").Fields.Add(new FieldDef { Name = "Name" });
 
@@ -67,13 +71,101 @@ public class TableDefTests
         Assert.True(Item.Columns.Contains("CategoryTitle"));
         Assert.Same(Definition.Joins.Get("Products").Fields.Get("Active"), Definition.FindColumnField("product__active"));
         Assert.Null(Definition.FindColumnField("Product__Name"));
-        JsonDataColumn Active = Assert.Single(new JsonDataTable(Item, Definition).Columns, Column => Column.Name == "Product__Active");
+        var SnapshotSource = Definition.FindAnyField("product__name");
+        Assert.Same(Definition.FindAnyJoinTable("Product"), SnapshotSource.Item1);
+        Assert.Equal("Name", SnapshotSource.Item2.Name);
+        Assert.Equal("Category", Definition.FindAnyField("categorytitle").Item1.Alias);
+        Assert.Equal(Texts.L("Product__Name"), Definition.FindAnyFieldTitle("Product__Name"));
+        Assert.Equal("Missing", Definition.FindAnyFieldTitle("Missing"));
+        using (DataTable Result = new())
+        {
+            Result.Columns.Add("Product__Name");
+            Result.Columns.Add("Product__Active");
+            Result.Columns.Add("CategoryTitle").Caption = "Custom category";
+            Definition.SetupFieldsDisplayLabelsFor(Result, new() { ["Product__Active"] = "Explicit label", ["CategoryTitle"] = "Ignored label" });
+            Assert.Equal(Texts.L("Product__Name"), Result.Columns["Product__Name"].Caption);
+            Assert.Equal("Explicit label", Result.Columns["Product__Active"].Caption);
+            Assert.Equal("Custom category", Result.Columns["CategoryTitle"].Caption);
+        }
+        Assert.True(Definition.FieldExists("productname"));
+        Assert.Same(Definition.GetField("ProductName"), Definition.FindField("productname"));
+        Assert.False(Definition.FieldExists("Product__Active"));
+        Assert.Throws<KeyNotFoundException>(() => Definition.GetField("Product__Active"));
+        Assert.Equal("Product", Definition.FindAnyJoinTable("products").Alias);
+        Assert.Equal("Categories", Definition.FindAnyJoinTable("category").Name);
+        Assert.Equal("OtherProduct", Definition.FindAnyJoinTable("otherproduct").Alias);
+        Assert.Equal("Product", Definition.FindJoinTableByMasterKeyField("productid").Alias);
+        Assert.Null(Definition.FindJoinTableByMasterKeyField("CategoryId"));
+        Assert.Equal("Category", Definition.FindAnyJoinTableByMasterKeyField("categoryid").Alias);
+        JsonDataTable Packet = Json.Deserialize<JsonDataTable>(Json.Serialize(new JsonDataTable(Item, Definition)));
+        JsonDataColumn Active = Assert.Single(Packet.Columns, Column => Column.Name == "Product__Active");
         Assert.Equal((int)DataFieldType.Boolean, Active.DataType);
         Assert.Null(Active.DefaultValue);
+        Assert.True(Active.IsNullable);
+        Assert.False(Definition.FindColumnField("Product__Active").IsNullable);
+        Assert.Equal((int)FieldFlags.Boolean, Active.Flags);
+        Assert.False(Definition.FindColumnField("Product__Active").IsNoInsertOrUpdate);
+        Assert.Equal((int)DataColumnType.Boolean, Active.ColumnType);
+        Assert.Equal("Product__Active", Active.Alias);
+        Assert.Equal("ProductActive", Active.TitleKey);
+        Assert.Equal(80, Active.DisplayWidth);
+        Assert.Equal("Active product", Active.ToolTip);
+        Assert.Equal("Product.Name", Assert.Single(Packet.Columns, Column => Column.Name == "ProductName").SnapshotOf);
         Assert.True(Item.Columns.Contains("OtherProduct__Name"));
+        Assert.Equal("OtherProduct__Name", Assert.Single(Packet.Columns, Column => Column.Name == "OtherProduct__Name").TitleKey);
+        Assert.Equal("Category__Title", Assert.Single(Packet.Columns, Column => Column.Name == "CategoryTitle").TitleKey);
         Assert.Contains("ProductName", Sql.UpdateRowSql);
         Assert.DoesNotContain("CategoryTitle", Sql.UpdateRowSql);
         Assert.DoesNotContain("CategoryTitle", Sql.InsertRowSql);
+    }
+
+    /// <summary>
+    /// The ID helpers configure custom key names for the memory table and generated SQL.
+    /// </summary>
+    [Fact]
+    public void IdHelpersConfigureThePrimaryKey()
+    {
+        TableDef Item = new() { Name = "OrderHeader" };
+        FieldDef Key = Item.AddInt64Id("OrderId");
+        Item.AddString("Description");
+        Assert.Equal("OrderId", Item.KeyField);
+        Assert.True(Key.IsReadOnlyUI);
+        Assert.True(Key.IsRequired);
+        Assert.True(Key.IsHidden);
+        using MemTable Table = Item.CreateDescriptorTable();
+        Assert.Equal(typeof(long), Table.Columns["OrderId"].DataType);
+        TableSqls Sql = Item.BuildSql(OidMode.AutoInc);
+        Assert.DoesNotContain("OrderId", Sql.InsertRowSql);
+        Assert.Contains($"where OrderId = {SqlProvider.GlobalPrefix}OrderId", Sql.SelectRowSql);
+    }
+
+    /// <summary>
+    /// Bindable groups respect display order and omit fields that cannot be bound.
+    /// </summary>
+    [Fact]
+    public void BindableGroupsKeepConfiguredOrder()
+    {
+        TableDef Table = new() { Name = "Customer", FieldGroups = new() { "Notes", " Empty ", "Address" } };
+        Table.AddId();
+        FieldDef Street = Table.AddField("Street", DataFieldType.String, MaxLength: 100, Group: "address", TitleKey: "PostalStreet");
+        Assert.Equal("PostalStreet", Street.TitleKey);
+        Assert.Equal(100, Street.MaxLength);
+        Assert.Same(Table, Street.TableDef);
+        Table.AddBlob("Photo").SetGroup("Empty");
+        Table.AddString("Name");
+        Table.AddInteger("Visits").SetGroup("Statistics");
+        FieldDef Comment = Table.AddTextBlob("Comment", Group: "Notes", TitleKey: "CustomerComment");
+        Assert.True(Comment.IsMemo);
+        Assert.Equal("CustomerComment", Comment.TitleKey);
+        FieldDef Rate = Table.AddDecimal("Rate", Decimals: 2, Flags: FieldFlags.Hidden);
+        Assert.Equal(2, Rate.Decimals);
+        Assert.True(Rate.IsHidden);
+
+        Dictionary<string, List<FieldDef>> Groups = Table.GetBindableGroups();
+        Assert.Equal(new[] { "General", "Notes", "Address", "Statistics" }, Groups.Keys);
+        Assert.Equal("Street", Assert.Single(Groups["ADDRESS"]).Name);
+        Assert.Equal("Comment", Assert.Single(Groups["Notes"]).Name);
+        Assert.Equal(new[] { "Street", "Name", "Visits", "Comment" }, Table.GetBindableFields().Select(Field => Field.Name));
     }
 
     // ● private
@@ -330,6 +422,29 @@ public class TableDefTests
         TableDef Loaded = Json.Deserialize<TableDef>(Text);
         CheckTreeReferences(Loaded);
         Assert.Equal("OrderId", Loaded.Details.Get("OrderLine").DetailField);
+
+        ModuleDef Module = new() { Name = "Order", Table = Item };
+        Item.Details.Get("OrderLine").IsOneToOne = true;
+        Item.Details.Get("OrderLine").IsUiVisible = false;
+        Item.AddString("CustomerId");
+        Item.AddJoin("CustomerId", "Customer").AddString("Name");
+        ModuleDef Copy = Json.Deserialize<ModuleDef>(Json.Serialize(Module));
+        TableDef Detail = Copy.Table.Details.Get("OrderLine");
+        TableDef Join = Copy.Table.Joins.Get("Customer");
+        Assert.Same(Copy, Copy.Table.ModuleDef);
+        Assert.Same(Copy, Detail.ModuleDef);
+        Assert.Same(Copy, Join.ModuleDef);
+        Assert.Same(Copy.Table, Join.Owner);
+        Assert.True(Detail.IsDetail);
+        using (MemTable DetailTable = Detail.CreateDescriptorTable())
+        {
+            JsonDataTable Packet = Json.Deserialize<JsonDataTable>(Json.Serialize(new JsonDataTable(DetailTable, Detail)));
+            Assert.True(Packet.IsOneToOne);
+            Assert.False(Packet.IsUiVisible);
+        }
+        Assert.True(Join.IsJoin);
+        Assert.True(Copy.Table.HasDetails);
+        Assert.True(Copy.Table.HasJoins);
     }
     /// <summary>
     /// Population retains the root and reconnects the newly loaded nested tree.

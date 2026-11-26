@@ -29,14 +29,17 @@ public class JsonDataModuleTests
             ModuleDef Definition = new() { Name = "CustomerModule", TitleKey = "Customers", ConnectionName = ConnectionName };
             Definition.SelectList.Add("All", "SELECT Id, Active FROM Customer");
             Definition.SelectList.Add("Active", "SELECT Id, Active FROM Customer WHERE Active = 1");
+            Definition.SecurityLevel = UserLevel.User | UserLevel.Service;
             Definition.Table.Name = "Customer";
+            Definition.Table.FieldGroups.Add("Status");
+            Definition.DetailOrder["Customer"] = new() { "Contacts", "Addresses" };
             Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
-            Definition.Table.Fields.Add(new FieldDef { Name = "Active", DataType = DataFieldType.Boolean });
+            Definition.Table.Fields.Add(new FieldDef { Name = "Active", DataType = DataFieldType.Boolean, IsNullable = false });
             Definition.Stocks.Add("Country", null);
             SqlStore Store = SqlStores.CreateSqlStore(ConnectionName);
             Store.ExecSql("CREATE TABLE Country (Id TEXT, Name TEXT)");
             Store.ExecSql("INSERT INTO Country VALUES ('GR', 'Greece')");
-            DataModule Module = Definition.Create();
+            DataModule Module = Definition.Create(new UserContext(new AppUser { UserLevel = UserLevel.Admin | UserLevel.Service }));
             Module.Insert();
             Module.ItemTable.Rows[0]["Active"] = 1;
             Module.ListTable.Columns.Add("Name", typeof(string));
@@ -55,17 +58,26 @@ public class JsonDataModuleTests
             JsonDataTable Item = Assert.Single(Packet.Tables);
             Assert.Equal("Customer", Item.Name);
             Assert.Equal((int)DataFieldType.Boolean, Item.Columns[1].DataType);
+            Assert.False(Item.Columns[1].IsNullable);
             Assert.Equal("Country", Assert.Single(Packet.Stocks).Name);
             Assert.Equal("Greece", Packet.Stocks[0].Rows[0].Data[1]);
             JsonDataModule Copy = Json.Deserialize<JsonDataModule>(Json.Serialize(Packet));
             Assert.Equal("CustomerModule", Copy.Name);
+            Assert.Equal(new[] { "User", "Service" }, Copy.SecurityLevel);
             Assert.Equal(Definition.Title, Copy.Title);
             Assert.Equal("Customers", Copy.TitleKey);
             Assert.Equal(new[] { "All", "Active" }, Copy.QueryNames);
             Assert.Equal((int)DataMode.Insert, Copy.State);
             Assert.Equal("Customer", Copy.ItemTableName);
-            Assert.Single(Copy.Tables);
+            Assert.Equal(new[] { "Status" }, Assert.Single(Copy.Tables).FieldGroups);
+            Assert.Equal(new[] { "Contacts", "Addresses" }, Copy.DetailOrder["Customer"]);
+            Assert.NotSame(Definition.Table.FieldGroups, Item.FieldGroups);
+            Assert.NotSame(Definition.DetailOrder["Customer"], Packet.DetailOrder["Customer"]);
             Assert.Single(Copy.Stocks);
+            Definition.SecurityLevel = UserLevel.Admin;
+            Assert.Equal(new[] { "Admin" }, new JsonDataModule(Module).SecurityLevel);
+            Definition.SecurityLevel = UserLevel.None;
+            Assert.Empty(new JsonDataModule(Module).SecurityLevel);
         }
         finally
         {

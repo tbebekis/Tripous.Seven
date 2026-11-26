@@ -1323,6 +1323,53 @@ public class MemTableTests
     }
 
     /// <summary>
+    /// Details use the master's locale and case sensitivity when matching string keys.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ActiveDetailsInheritMasterComparisonSettings(bool AttachWhileActive)
+    {
+        using MemTable Master = new("Master") { Locale = System.Globalization.CultureInfo.GetCultureInfo("el-GR"), CaseSensitive = true };
+        using MemTable Detail = new("Detail") { DetailField = "MasterId", CaseSensitive = false };
+        Master.Columns.Add("Id", typeof(string));
+        Detail.Columns.Add("Id", typeof(string));
+        Detail.Columns.Add("MasterId", typeof(string));
+        Master.CurrentRow = Master.Rows.Add("GR");
+        Detail.Rows.Add("Other", "gr");
+        Detail.Rows.Add("Match", "GR");
+
+        if (AttachWhileActive)
+            Master.DetailsActive = true;
+        Master.AddDetail(Detail);
+        if (!AttachWhileActive)
+            Master.DetailsActive = true;
+
+        Assert.Equal(Master.Locale, Detail.Locale);
+        Assert.True(Detail.CaseSensitive);
+        Assert.Equal("Match", Assert.Single(Detail.DataView.Cast<DataRowView>())["Id"]);
+    }
+
+    /// <summary>
+    /// Explicitly clearing the current row notifies listeners even when it is already null.
+    /// </summary>
+    [Fact]
+    public void SetCurrentRowToNullForcesNotification()
+    {
+        using MemTable Table = CreateTable();
+        Table.Rows.Add(1);
+        int Notifications = 0;
+        Table.CurrentRowChanged += (Sender, Args) => Notifications++;
+
+        Table.SetCurrentRowToNull();
+        Table.SetCurrentRowToNull();
+
+        Assert.Null(Table.CurrentRow);
+        Assert.Single(Table.Rows.Cast<DataRow>());
+        Assert.Equal(2, Notifications);
+    }
+
+    /// <summary>
     /// Master change events observe the old and new references in order.
     /// </summary>
     [Fact]
@@ -1979,6 +2026,24 @@ public class MemTableTests
         Assert.Equal(0, Count);
         Table.UpdateCurrentRow();
         Assert.Equal(1, Count);
+    }
+
+    /// <summary>
+    /// Refreshing a detail preserves its sorting and the master's current selection.
+    /// </summary>
+    [Fact]
+    public void MasterRowChangedRefreshesOnlyTheDetail()
+    {
+        var (Master, Detail, _, _, _) = CreateRelatedTables();
+        DataRow Selected = Master.CurrentRow;
+        DataRow Expected = Detail.CurrentRow;
+        Detail.DataView.Sort = "Id DESC";
+        Detail.CurrentRow = null;
+        Detail.MasterRowChanged();
+        Assert.NotNull(Expected);
+        Assert.Same(Expected, Detail.CurrentRow);
+        Assert.Same(Selected, Master.CurrentRow);
+        Assert.Equal("Id DESC", Detail.DataView.Sort);
     }
 
     /// <summary>

@@ -34,6 +34,25 @@ public class SqlFilterDef : BaseDef
             throw new InvalidOperationException($"Invalid filter boolean operator: {BoolOp}");
         if (!Enum.IsDefined(ConditionOp) || ConditionOp == ConditionOp.None)
             throw new InvalidOperationException($"Invalid filter condition operator: {ConditionOp}");
+        if (FilterDataType == DataFieldType.Boolean && ConditionOp != ConditionOp.Equal)
+            throw new InvalidOperationException($"Boolean filter '{Name}' requires the Equal condition operator.");
+    }
+
+    /// <summary>
+    /// Validates a filter and the runtime values required by its condition.
+    /// IS NULL takes no value, BETWEEN takes two, and IN takes a collection.
+    /// </summary>
+    public void CheckDescriptorWithValues()
+    {
+        CheckDescriptor();
+        if (ConditionOp == ConditionOp.Null)
+            return;
+        if (ConditionOp == ConditionOp.Between && (Value == null || Value == DBNull.Value || Value2 == null || Value2 == DBNull.Value))
+            throw new InvalidOperationException($"Filter '{Name}' requires two values.");
+        if (Value == null || Value == DBNull.Value)
+            throw new InvalidOperationException($"Filter '{Name}' requires a value.");
+        if (ConditionOp == ConditionOp.In && (Value is not IEnumerable || Value is string))
+            throw new InvalidOperationException($"Filter '{Name}' requires a collection.");
     }
 
     // ● properties

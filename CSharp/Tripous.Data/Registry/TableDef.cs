@@ -21,7 +21,173 @@ public class TableDef : BaseDef
     DefList<TableDef> fDetails;
     string fAlias;
 
+    // ● internal
+    /// <summary>
+    /// Adds missing fields and updates physical column metadata while preserving declared field types.
+    /// Database-generated columns remain available for reads and are excluded from writes.
+    /// </summary>
+    internal void UpdateFrom(DbMetaTable Source, SqlStore Store, HashSet<FieldDef> InferredFields)
+    {
+        foreach (DbMetaColumn Column in Source.Columns.OrderBy(Item => Item.OrdinalPosition))
+        {
+            FieldDef Field = Fields.Find(Column.Name);
+            if (Field == null)
+            {
+                Field = AddField(Column.Name, Store.GetMetadataFieldType(Column));
+                InferredFields.Add(Field);
+            }
+            if (!Field.IsNativeField)
+                continue;
+            Field.IsNullable = Column.IsNullable;
+            if (Field.DataType == DataFieldType.String && Column.SizeInChars > 0)
+                Field.MaxLength = Column.SizeInChars;
+            if (Column.IsIdentity || Column.IsComputed)
+                Field.Flags |= FieldFlags.NoInsertUpdate;
+        }
+    }
+
+    /// <summary>
+    /// Finds the fields that link this table to one of its direct details.
+    /// </summary>
+    internal (FieldDef Master, FieldDef Detail) GetRelationFields(TableDef Detail)
+    {
+        return (FindField(GetMasterRelationFieldName(Detail)), Detail.FindField(GetDetailRelationFieldName(Detail)));
+    }
+
     // ● public
+    /// <summary>
+    /// Finds a join by source table name or SQL alias anywhere in this table's join tree.
+    /// Direct joins are checked before nested joins.
+    /// </summary>
+    public TableDef FindAnyJoinTable(string NameOrAlias)
+        => FindJoin(Join => string.Equals(Join.Name, NameOrAlias, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Join.Alias, NameOrAlias, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Finds a direct join that uses the specified field of this table in its join condition.
+    /// </summary>
+    public TableDef FindJoinTableByMasterKeyField(string MasterKeyField)
+        => string.IsNullOrWhiteSpace(MasterKeyField) ? null
+            : Joins.FirstOrDefault(Join => string.Equals(Join.MasterField, MasterKeyField, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Finds the first join using the specified parent field anywhere in this table's join tree.
+    /// Use the direct lookup when the field name is meaningful only within one table.
+    /// </summary>
+    public TableDef FindAnyJoinTableByMasterKeyField(string MasterKeyField)
+        => string.IsNullOrWhiteSpace(MasterKeyField) ? null
+            : FindJoin(Join => string.Equals(Join.MasterField, MasterKeyField, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Returns whether this table declares a field with the specified name.
+    /// </summary>
+    public bool FieldExists(string FieldName) => Fields.Contains(FieldName);
+
+    /// <summary>
+    /// Finds a field declared directly on this table by name, or returns null.
+    /// </summary>
+    public FieldDef FindField(string FieldName) => Fields.Find(FieldName);
+
+    /// <summary>
+    /// Finds a field declared directly on this table by name, or throws if absent.
+    /// </summary>
+    public FieldDef GetField(string FieldName) => Fields.Get(FieldName);
+
+    /// <summary>
+    /// Returns this table's bindable fields in declaration order.
+    /// </summary>
+    public List<FieldDef> GetBindableFields() => Fields.Where(Field => Field.IsBindable).ToList();
+
+    /// <summary>
+    /// Groups bindable fields by name without distinguishing case.
+    /// General comes first, followed by configured groups and then groups found in the fields.
+    /// Empty groups are omitted and fields keep their declaration order.
+    /// </summary>
+    public Dictionary<string, List<FieldDef>> GetBindableGroups()
+    {
+        Dictionary<string, List<FieldDef>> FieldsByGroup = GetBindableFields()
+            .GroupBy(Field => Field.Group.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(Group => Group.Key, Group => Group.ToList(), StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> GroupNames = new[] { "General" }
+            .Concat((FieldGroups ?? new List<string>()).Select(Group => Group?.Trim()))
+            .Concat(FieldsByGroup.Keys);
+        Dictionary<string, List<FieldDef>> Result = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string Group in GroupNames)
+        {
+            if (!string.IsNullOrWhiteSpace(Group) && FieldsByGroup.TryGetValue(Group, out List<FieldDef> GroupFields))
+                Result.TryAdd(Group, GroupFields);
+        }
+        return Result;
+    }
+
+    /// <summary>
+    /// Finds a declared field by name or alias in this table and its nested joins.
+    /// Returns the declaring table together with the field, even for fields omitted from the SELECT.
+    /// For example, a lookup field can still be found when a stored snapshot replaces its projection.
+    /// </summary>
+    public Tuple<TableDef, FieldDef> FindAnyField(string NameOrAlias)
+    {
+        if (string.IsNullOrWhiteSpace(NameOrAlias))
+            return null;
+        return FindIn(this, IsJoin);
+
+        Tuple<TableDef, FieldDef> FindIn(TableDef Table, bool IsJoined)
+        {
+            foreach (FieldDef Field in Table.Fields)
+            {
+                string Alias = Field.Alias;
+                if (IsJoined && string.IsNullOrWhiteSpace(Alias))
+                    Alias = $"{Table.Alias}__{Field.Name}";
+                if (string.Equals(Field.Name, NameOrAlias, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Alias, NameOrAlias, StringComparison.OrdinalIgnoreCase))
+                    return Tuple.Create(Table, Field);
+            }
+            foreach (TableDef Join in Table.Joins)
+            {
+                Tuple<TableDef, FieldDef> Result = FindIn(Join, IsJoined: true);
+                if (Result != null)
+                    return Result;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Returns the localized title of a declared field found by name or alias.
+    /// If the field cannot be found, returns the supplied name or alias.
+    /// </summary>
+    public string FindAnyFieldTitle(string NameOrAlias)
+    {
+        Tuple<TableDef, FieldDef> Match = FindAnyField(NameOrAlias);
+        if (Match == null)
+            return NameOrAlias;
+        (TableDef Table, FieldDef Field) = Match;
+        return Field.IsTitleKeyEmpty && (Table.IsJoin || !ReferenceEquals(Table, this))
+            ? Texts.L($"{Table.Alias}__{Field.Name}")
+            : Field.Title;
+    }
+
+    /// <summary>
+    /// Supplies captions for columns whose caption is empty or still matches their name.
+    /// An explicit display label takes precedence over the title of a declared field, including joins.
+    /// Existing custom captions are preserved.
+    /// </summary>
+    public void SetupFieldsDisplayLabelsFor(DataTable Table, Dictionary<string, string> DisplayLabels)
+    {
+        ArgumentNullException.ThrowIfNull(Table);
+        foreach (DataColumn Column in Table.Columns)
+        {
+            if (!string.IsNullOrWhiteSpace(Column.Caption)
+                && !string.Equals(Column.Caption, Column.ColumnName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (DisplayLabels?.TryGetValue(Column.ColumnName, out string Label) == true && !string.IsNullOrWhiteSpace(Label))
+                Column.Caption = Label;
+            else
+                Column.Caption = FindAnyFieldTitle(Column.ColumnName);
+        }
+    }
+
     /// <summary>
     /// Finds the descriptor for a memory column by its name, including projected join aliases.
     /// Use the owning table descriptor to determine which fields belong to the database table.
@@ -30,7 +196,7 @@ public class TableDef : BaseDef
     {
         if (string.IsNullOrWhiteSpace(ColumnName))
             return null;
-        return Fields.Find(ColumnName) ?? GetJoinProjections(new())
+        return FindField(ColumnName) ?? GetJoinProjections(new())
             .FirstOrDefault(Projection => string.Equals(Projection.ColumnName, ColumnName, StringComparison.OrdinalIgnoreCase)).Field;
     }
 
@@ -69,6 +235,7 @@ public class TableDef : BaseDef
     public MemTable CreateDescriptorTable()
     {
         CheckDescriptor();
+        UpdateReferences();
         MemTable Table = new(Name) { KeyField = KeyField };
         if (!string.IsNullOrWhiteSpace(MasterField))
             Table.MasterField = MasterField;
@@ -140,6 +307,8 @@ public class TableDef : BaseDef
         TableDef Join = new()
         {
             Name = ForeignTable,
+            Owner = this,
+            ModuleDef = ModuleDef,
             Alias = ForeignAlias,
             KeyField = ForeignPrimaryKey,
             MasterField = OwnKeyField
@@ -148,14 +317,70 @@ public class TableDef : BaseDef
         return Join;
     }
     /// <summary>
-    /// Adds a field with the specified data type to this table definition.
+    /// Adds a field with the specified data type and optional display and lookup metadata.
+    /// For example, a CountryId field can name its lookup source and the group where it appears.
     /// </summary>
-    public FieldDef AddField(string Name, DataFieldType DataType, int MaxLength = -1, FieldFlags Flags = FieldFlags.None)
+    public FieldDef AddField(string Name, DataFieldType DataType, int MaxLength = -1, FieldFlags Flags = FieldFlags.None,
+        string Group = null, string TitleKey = null, string Alias = null, int Decimals = -1,
+        string LookupSource = null, string Locator = null)
     {
-        FieldDef Field = new() { Name = Name, DataType = DataType, MaxLength = MaxLength, Flags = Flags, TableDef = this };
+        FieldDef Field = new()
+        {
+            Name = Name,
+            DataType = DataType,
+            MaxLength = MaxLength,
+            Flags = Flags,
+            Group = Group,
+            TitleKey = TitleKey,
+            Alias = Alias,
+            Decimals = Decimals,
+            LookupSource = LookupSource,
+            Locator = Locator,
+            TableDef = this
+        };
         Fields.Add(Field);
         return Field;
     }
+    /// <summary>
+    /// Adds the primary key field using the application's default key type.
+    /// When no name is supplied, uses the configured KeyField.
+    /// </summary>
+    public FieldDef AddId(string FieldName = null, FieldFlags Flags = FieldFlags.Required | FieldFlags.Hidden)
+        => AddId(FieldName, DbConfig.DefaultPrimaryKeyType, Flags);
+
+    /// <summary>
+    /// Adds the primary key field with an explicit string or integer type.
+    /// A supplied name becomes the table's KeyField.
+    /// </summary>
+    public FieldDef AddId(string FieldName, DataFieldType DataType, FieldFlags Flags = FieldFlags.Required | FieldFlags.Hidden, int MaxLength = 40)
+    {
+        if (DataType is not (DataFieldType.String or DataFieldType.Integer or DataFieldType.Int64))
+            throw new ArgumentException("The key field must be a string or integer.", nameof(DataType));
+
+        FieldDef Field = AddField(FieldName ?? KeyField, DataType, DataType == DataFieldType.String ? MaxLength : -1,
+            Flags | FieldFlags.ReadOnlyUI);
+        KeyField = Field.Name;
+        return Field;
+    }
+
+    /// <summary>
+    /// Adds a string primary key with the specified maximum length.
+    /// </summary>
+    public FieldDef AddStringId(string FieldName = null, FieldFlags Flags = FieldFlags.Required | FieldFlags.Hidden, int MaxLength = 40)
+        => AddId(FieldName, DataFieldType.String, Flags, MaxLength);
+
+    /// <summary>
+    /// Adds a 32-bit integer primary key.
+    /// </summary>
+    public FieldDef AddIntegerId(string FieldName = null, FieldFlags Flags = FieldFlags.Required | FieldFlags.Hidden)
+        => AddId(FieldName, DataFieldType.Integer, Flags);
+
+    /// <summary>
+    /// Adds a 64-bit integer primary key.
+    /// </summary>
+    public FieldDef AddInt64Id(string FieldName = null, FieldFlags Flags = FieldFlags.Required | FieldFlags.Hidden)
+        => AddId(FieldName, DataFieldType.Int64, Flags);
+
     /// <summary>
     /// Adds a direct detail and defines the columns linking it to its master.
     /// </summary>
@@ -165,6 +390,7 @@ public class TableDef : BaseDef
         {
             Name = DetailTableName,
             Master = this,
+            ModuleDef = ModuleDef,
             MasterField = MasterField,
             DetailField = DetailField
         };
@@ -174,43 +400,53 @@ public class TableDef : BaseDef
     /// <summary>
     /// Adds a string field to this table definition.
     /// </summary>
-    public FieldDef AddString(string FieldName, int MaxLength = 96) => AddField(FieldName, DataFieldType.String, MaxLength);
+    public FieldDef AddString(string FieldName, int MaxLength = 96, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.String, MaxLength, Flags: Flags, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a 32-bit integer field to this table definition.
     /// </summary>
-    public FieldDef AddInteger(string FieldName) => AddField(FieldName, DataFieldType.Integer);
+    public FieldDef AddInteger(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Integer, Flags: Flags, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a 64-bit integer field to this table definition.
     /// </summary>
-    public FieldDef AddInt64(string FieldName) => AddField(FieldName, DataFieldType.Int64);
+    public FieldDef AddInt64(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Int64, Flags: Flags, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a double-precision field to this table definition.
     /// </summary>
-    public FieldDef AddDouble(string FieldName) => AddField(FieldName, DataFieldType.Double);
+    public FieldDef AddDouble(string FieldName, string Group = null, int Decimals = -1, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Double, Flags: Flags, Group: Group, TitleKey: TitleKey, Decimals: Decimals);
     /// <summary>
     /// Adds a decimal field to this table definition.
     /// </summary>
-    public FieldDef AddDecimal(string FieldName) => AddField(FieldName, DataFieldType.Decimal);
+    public FieldDef AddDecimal(string FieldName, string Group = null, int Decimals = -1, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Decimal, Flags: Flags, Group: Group, TitleKey: TitleKey, Decimals: Decimals);
     /// <summary>
     /// Adds a date field to this table definition.
     /// </summary>
-    public FieldDef AddDate(string FieldName) => AddField(FieldName, DataFieldType.Date);
+    public FieldDef AddDate(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Date, Flags: Flags, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a date and time field to this table definition.
     /// </summary>
-    public FieldDef AddDateTime(string FieldName) => AddField(FieldName, DataFieldType.DateTime);
+    public FieldDef AddDateTime(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.DateTime, Flags: Flags, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a Boolean field to this table definition.
     /// </summary>
-    public FieldDef AddBoolean(string FieldName) => AddField(FieldName, DataFieldType.Boolean);
+    public FieldDef AddBoolean(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Boolean, Flags: Flags | FieldFlags.Boolean, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a binary field to this table definition.
     /// </summary>
-    public FieldDef AddBlob(string FieldName) => AddField(FieldName, DataFieldType.Blob);
+    public FieldDef AddBlob(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.Blob, Flags: Flags, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Adds a large text field to this table definition.
     /// </summary>
-    public FieldDef AddTextBlob(string FieldName) => AddField(FieldName, DataFieldType.TextBlob);
+    public FieldDef AddTextBlob(string FieldName, string Group = null, string TitleKey = null, FieldFlags Flags = FieldFlags.None)
+        => AddField(FieldName, DataFieldType.TextBlob, Flags: Flags | FieldFlags.Memo, Group: Group, TitleKey: TitleKey);
     /// <summary>
     /// Checks the table name, key field name and presence of fields.
     /// </summary>
@@ -242,12 +478,11 @@ public class TableDef : BaseDef
         Details.CheckDescriptors();
         foreach (TableDef Detail in Details)
         {
-            string MasterName = string.IsNullOrWhiteSpace(Detail.MasterField) ? "Id" : Detail.MasterField;
-            string DetailName = string.IsNullOrWhiteSpace(Detail.DetailField) ? Detail.KeyField : Detail.DetailField;
-            FieldDef MasterFieldDef = Fields.Find(MasterName);
-            FieldDef DetailFieldDef = Detail.Fields.Find(DetailName);
-            if (MasterFieldDef == null || DetailFieldDef == null)
-                throw new InvalidOperationException($"Invalid master-detail fields for '{Detail.Name}'.");
+            (FieldDef MasterFieldDef, FieldDef DetailFieldDef) = GetRelationFields(Detail);
+            if (MasterFieldDef == null)
+                throw new InvalidOperationException($"Detail table '{Detail.Name}' refers to missing master field '{GetMasterRelationFieldName(Detail)}' on '{Name}'.");
+            if (DetailFieldDef == null)
+                throw new InvalidOperationException($"Detail table '{Detail.Name}' has no relation field '{GetDetailRelationFieldName(Detail)}'.");
             if (!string.IsNullOrWhiteSpace(MasterFieldDef.Expression) || !string.IsNullOrWhiteSpace(DetailFieldDef.Expression))
                 throw new InvalidOperationException($"Master-detail fields for '{Detail.Name}' cannot be computed.");
             Type MasterType = GetRelationFieldType(MasterFieldDef.DataType);
@@ -255,10 +490,40 @@ public class TableDef : BaseDef
             if (MasterType == null || DetailType == null)
                 throw new NotSupportedException($"Unsupported master-detail field type for '{Detail.Name}'.");
             if (MasterType != DetailType)
-                throw new InvalidOperationException($"Invalid master-detail fields for '{Detail.Name}'.");
+                throw new InvalidOperationException(
+                    $"Master field '{Name}.{MasterFieldDef.Name}' ({MasterType.Name}) and detail field '{Detail.Name}.{DetailFieldDef.Name}' ({DetailType.Name}) must have the same type.");
         }
     }
     // ● private
+    /// <summary>
+    /// Searches each level of the join tree in declaration order.
+    /// </summary>
+    TableDef FindJoin(Func<TableDef, bool> Match)
+    {
+        TableDef Result = Joins.FirstOrDefault(Match);
+        if (Result != null)
+            return Result;
+        foreach (TableDef Join in Joins)
+        {
+            Result = Join.FindJoin(Match);
+            if (Result != null)
+                return Result;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves the parent column name, defaulting to Id.
+    /// </summary>
+    static string GetMasterRelationFieldName(TableDef Detail)
+        => string.IsNullOrWhiteSpace(Detail.MasterField) ? "Id" : Detail.MasterField;
+
+    /// <summary>
+    /// Resolves the detail column name, defaulting to the detail's key.
+    /// </summary>
+    static string GetDetailRelationFieldName(TableDef Detail)
+        => string.IsNullOrWhiteSpace(Detail.DetailField) ? Detail.KeyField : Detail.DetailField;
+
     void CheckTreeTopology()
     {
         HashSet<TableDef> Tables = new(ReferenceEqualityComparer.Instance);
@@ -377,7 +642,7 @@ public class TableDef : BaseDef
         _ => null,
     };
     /// <summary>
-    /// Reconnects fields and detail definitions to this table recursively.
+    /// Reconnects fields, details and joins to their owners recursively.
     /// </summary>
     public override void UpdateReferences()
     {
@@ -386,13 +651,56 @@ public class TableDef : BaseDef
         foreach (TableDef Detail in Details)
         {
             Detail.Master = this;
+            Detail.Owner = null;
+            Detail.ModuleDef = ModuleDef;
             Detail.UpdateReferences();
         }
         foreach (TableDef Join in Joins)
+        {
+            Join.Master = null;
+            Join.Owner = this;
+            Join.ModuleDef = ModuleDef;
             Join.UpdateReferences();
+        }
     }
 
     // ● properties
+    /// <summary>
+    /// Gets or sets the module definition that owns this table tree.
+    /// </summary>
+    [JsonIgnore]
+    public ModuleDef ModuleDef { get; set; }
+
+    /// <summary>
+    /// Gets or sets the table that declares this join.
+    /// </summary>
+    [JsonIgnore]
+    public TableDef Owner { get; set; }
+
+    /// <summary>
+    /// Gets whether this table is a detail of another table.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsDetail => Master != null;
+
+    /// <summary>
+    /// Gets whether another table declares this table as a join.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsJoin => Owner != null;
+
+    /// <summary>
+    /// Gets whether this table has direct detail definitions.
+    /// </summary>
+    [JsonIgnore]
+    public bool HasDetails => fDetails?.Count > 0;
+
+    /// <summary>
+    /// Gets whether this table has direct join definitions.
+    /// </summary>
+    [JsonIgnore]
+    public bool HasJoins => Joins.Count > 0;
+
     /// <summary>
     /// Gets or sets the master table definition, when this is a detail.
     /// </summary>
@@ -461,6 +769,26 @@ public class TableDef : BaseDef
             NotifyPropertyChanged(nameof(DetailField));
         }
     }
+    /// <summary>
+    /// Gets or sets whether a detail represents a single row per master for presentation.
+    /// For example, Trade can be the top table, with StoreTrade and FinTrade each
+    /// holding one detail row for the same trade.
+    /// A primary key or unique constraint on the detail link enforces this in the database.
+    /// </summary>
+    public bool IsOneToOne { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether clients should display this table.
+    /// For example, a form can hide a one-to-one detail or omit the grid for a
+    /// multi-row detail. Hidden tables remain available in the item tree.
+    /// </summary>
+    public bool IsUiVisible { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the preferred display order of the table's field groups.
+    /// </summary>
+    public List<string> FieldGroups { get; set; } = new();
+
     /// <summary>
     /// Gets or sets the fields described by this table.
     /// </summary>

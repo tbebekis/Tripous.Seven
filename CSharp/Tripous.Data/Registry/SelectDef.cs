@@ -34,6 +34,7 @@ public class SelectDef : BaseDef
     /// <summary>
     /// Checks this SELECT descriptor and its filter definitions.
     /// SQL may be supplied by the consumer or inferred for a stock table.
+    /// Use ValidateBooleanFilterTypes to check the database result types separately.
     /// </summary>
     public override void CheckDescriptor()
     {
@@ -46,12 +47,39 @@ public class SelectDef : BaseDef
     public SqlFilterDef AddFilter(string Name, string FieldName = null, DataFieldType FilterDataType = DataFieldType.String, BoolOp BoolOp = BoolOp.And, ConditionOp ConditionOp = ConditionOp.Equal, string TitleKey = null)
         => FilterDefs.Add(Name, FieldName, FilterDataType, BoolOp, ConditionOp, TitleKey);
     /// <summary>
-    /// Adds a filter using a field definition's name, data type and title key.
+    /// Adds a filter using a field definition's name, logical data type and title key.
+    /// An integer field marked as Boolean produces a Boolean filter.
     /// </summary>
     public SqlFilterDef AddFilter(FieldDef FieldDef)
     {
         ArgumentNullException.ThrowIfNull(FieldDef);
-        return AddFilter(FieldDef.Name, FieldDef.Name, FieldDef.DataType, TitleKey: FieldDef.TitleKey);
+        DataFieldType DataType = FieldDef.IsBoolean ? DataFieldType.Boolean : FieldDef.DataType;
+        return AddFilter(FieldDef.Name, FieldDef.Name, DataType, TitleKey: FieldDef.TitleKey);
+    }
+    /// <summary>
+    /// Checks that the SELECT returns an integer column for every Boolean filter.
+    /// Call this when validating a configured SELECT against the database.
+    /// When no filter collection is supplied, checks the registered filters.
+    /// </summary>
+    public void ValidateBooleanFilterTypes(SqlStore Store, SqlFilterDefs Filters = null, SqlParams Params = null)
+    {
+        ArgumentNullException.ThrowIfNull(Store);
+        SqlFilterDef[] BooleanFilters = (Filters ?? FilterDefs)
+            .Where(Filter => Filter.FilterDataType == DataFieldType.Boolean).ToArray();
+        if (BooleanFilters.Length == 0)
+            return;
+
+        ReadOnlyCollection<DbColumn> Schema = Store.GetSelectSqlSchema(SqlText, Params ?? new SqlParams());
+        foreach (SqlFilterDef Filter in BooleanFilters)
+        {
+            string FieldName = Filter.FieldName.Split('.').Last();
+            DbColumn Column = Schema.FirstOrDefault(Item => string.Equals(Item.ColumnName, FieldName, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException($"Boolean filter '{Filter.Name}' refers to column '{FieldName}', which is absent from SELECT '{Name}'.");
+            Type Type = Column.DataType;
+            if (Type != typeof(byte) && Type != typeof(sbyte) && Type != typeof(short) && Type != typeof(ushort)
+                && Type != typeof(int) && Type != typeof(uint) && Type != typeof(long) && Type != typeof(ulong))
+                throw new InvalidOperationException($"Boolean filter '{Filter.Name}' requires an integer column. Column '{FieldName}' in SELECT '{Name}' returns '{Type?.Name}'.");
+        }
     }
     /// <summary>
     /// Creates suggested filters from SELECT result metadata using Avalon's common column names.
@@ -62,7 +90,7 @@ public class SelectDef : BaseDef
     {
         ArgumentNullException.ThrowIfNull(Store);
         string[] Names = { "Code", "Name", "Description", "LastName", "FirstName", "Product", "Customer", "Country", "City", "Date", "Amount", "Price" };
-        ReadOnlyCollection<DbColumn> Schema = Store.GetSelectSchema(SqlText, Params ?? new SqlParams());
+        ReadOnlyCollection<DbColumn> Schema = Store.GetSelectSqlSchema(SqlText, Params ?? new SqlParams());
         var Columns = Schema.Where(Column => Names.Contains(Column.ColumnName, StringComparer.OrdinalIgnoreCase)
             && GetFilterDataType(Column.DataType) != DataFieldType.None
             && !(Column.DataType == typeof(string) && Column.ColumnSize > 256))

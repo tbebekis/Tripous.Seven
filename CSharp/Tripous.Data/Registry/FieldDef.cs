@@ -31,6 +31,25 @@ public class FieldDef : BaseDef
     int fDecimals = -1;
     string fToolTip;
 
+    // ● protected
+    /// <summary>
+    /// Uses the join alias and field name as a resource key when no title key was supplied.
+    /// For example, a Product join with a Name field uses Product__Name.
+    /// </summary>
+    protected override string GetTitleKey()
+        => IsTitleKeyEmpty && TableDef?.IsJoin == true ? $"{TableDef.Alias}__{Name}" : base.GetTitleKey();
+
+    /// <summary>
+    /// Persists the assigned key, allowing the fallback to follow the join alias after loading.
+    /// </summary>
+    [JsonInclude]
+    [JsonPropertyName("TitleKey")]
+    string SerializedTitleKey
+    {
+        get => fTitleKey;
+        set => TitleKey = value;
+    }
+
     // ● internal
     internal (string Alias, string Column) GetSnapshotSource()
     {
@@ -113,7 +132,123 @@ public class FieldDef : BaseDef
         }
     }
 
+    /// <summary>
+    /// Sets <see cref="Alias"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetAlias(string Value)
+    {
+        Alias = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="TitleKey"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetTitleKey(string Value)
+    {
+        TitleKey = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="MaxLength"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetMaxLength(int Value)
+    {
+        MaxLength = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="Decimals"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetDecimals(int Value)
+    {
+        Decimals = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="Flags"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetFlags(FieldFlags Value)
+    {
+        Flags = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="SnapshotOf"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetSnapshotOf(string Value)
+    {
+        SnapshotOf = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="DefaultValue"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetDefaultValue(string Value)
+    {
+        DefaultValue = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="Expression"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetExpression(string Value)
+    {
+        Expression = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="IsNullable"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetNullable(bool Value)
+    {
+        IsNullable = Value;
+        return this;
+    }
+    /// <summary>
+    /// Sets <see cref="Group"/> and returns this descriptor.
+    /// </summary>
+    public FieldDef SetGroup(string Value)
+    {
+        Group = Value;
+        return this;
+    }
+    /// <summary>
+    /// Adds flags to this descriptor and returns it.
+    /// </summary>
+    public FieldDef AddFlags(FieldFlags Value)
+    {
+        Flags |= Value;
+        return this;
+    }
+    /// <summary>
+    /// Marks the field as a memo and returns this descriptor.
+    /// </summary>
+    public FieldDef SetMemo()
+    {
+        Flags = (Flags & ~FieldFlags.LargeMemo) | FieldFlags.Memo;
+        return this;
+    }
+    /// <summary>
+    /// Marks the field as a large memo and returns this descriptor.
+    /// </summary>
+    public FieldDef SetLargeMemo()
+    {
+        Flags = (Flags & ~FieldFlags.Memo) | FieldFlags.LargeMemo;
+        return this;
+    }
+
     // ● properties
+    /// <summary>
+    /// Gets or sets the resource key for this field's title.
+    /// When unspecified, a joined field uses its SQL table alias and column name.
+    /// </summary>
+    [JsonIgnore]
+    public override string TitleKey
+    {
+        get => base.TitleKey;
+        set => base.TitleKey = value;
+    }
+
     /// <summary>
     /// Gets or sets the display group, such as General or Address.
     /// </summary>
@@ -315,6 +450,36 @@ public class FieldDef : BaseDef
     /// </summary>
     [JsonIgnore]
     public bool IsLocator => !string.IsNullOrWhiteSpace(Locator);
+    /// <summary>
+    /// Gets whether the field has an integer type.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsInteger => DataType is DataFieldType.Integer or DataFieldType.Int64;
+    /// <summary>
+    /// Gets whether the field has a floating-point or decimal type.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsFloat => DataType is DataFieldType.Double or DataFieldType.Decimal or DataFieldType.Decimal_;
+    /// <summary>
+    /// Gets whether the field has a numeric type.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsNumeric => IsInteger || IsFloat;
+    /// <summary>
+    /// Gets whether the field has a date or date-time type.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsDateTime => DataType is DataFieldType.Date or DataFieldType.DateTime;
+    /// <summary>
+    /// Gets whether the field has a binary or text blob type.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsBlob => DataType is DataFieldType.Blob or DataFieldType.TextBlob;
+    /// <summary>
+    /// Gets whether the field can be bound to a generated UI control.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsBindable => IsVisible && DataType is not (DataFieldType.None or DataFieldType.Blob);
     /// <summary>
     /// Gets whether the field represents a Boolean, including integer fields
     /// explicitly marked with the Boolean flag.

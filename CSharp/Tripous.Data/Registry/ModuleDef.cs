@@ -24,6 +24,29 @@ public class ModuleDef : BaseDef
     string fCodeFieldName;
     string fRowVersionFieldName;
 
+    string fGroup;
+    string fDescription;
+    bool fIsSingleSelect;
+    bool fUseFilters = true;
+    string fItemCaptionField;
+    Dictionary<string, List<string>> fDetailOrder;
+
+    /// <summary>
+    /// Resolves the conventional caption field when none is configured.
+    /// </summary>
+    string GetItemCaptionField()
+    {
+        if (!string.IsNullOrWhiteSpace(fItemCaptionField) || Table == null)
+            return fItemCaptionField;
+        foreach (string Name in new[] { "Name", "Code", "Description", "Id" })
+        {
+            FieldDef Field = Table.Fields.Find(Name);
+            if (Field != null)
+                return Field.Name;
+        }
+        return Table.Fields.FirstOrDefault(Field => Field.DataType == DataFieldType.String)?.Name;
+    }
+
     // ● public
     /// <summary>
     /// Checks this module and all its table, SELECT and stock descriptors.
@@ -61,9 +84,35 @@ public class ModuleDef : BaseDef
                 throw new InvalidOperationException($"Code field '{CodeFieldName}' must be a database field included in INSERT statements.");
             if (string.Equals(Field.Name, Table.KeyField, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"Code field '{CodeFieldName}' must not be the primary key.");
-            DataRegistry.CodeProviders.Get(CodeProvider);
+            DataRegistry.CodeProviders.Get(CodeProvider).CheckDescriptor();
         }
     }
+    /// <summary>
+    /// Returns whether the supplied user meets the module's access requirements.
+    /// Admin includes User and Guest, User includes Guest, and God has full access.
+    /// ClientApp and Service permissions are independent of that hierarchy.
+    /// </summary>
+    public bool CanAccess(AppUser User)
+    {
+        UserLevel Level = User?.UserLevel ?? UserLevel.None;
+        if ((Level & UserLevel.God) != 0)
+            return true;
+        if ((Level & UserLevel.Admin) != 0)
+            Level |= UserLevel.User;
+        if ((Level & UserLevel.User) != 0)
+            Level |= UserLevel.Guest;
+        return (Level & SecurityLevel) == SecurityLevel;
+    }
+
+    /// <summary>
+    /// Throws before module construction or initialization when the host user lacks access.
+    /// </summary>
+    internal void CheckAccess(UserContext Context)
+    {
+        if (!CanAccess(Context?.CurrentUser))
+            throw new UnauthorizedAccessException($"Access denied to data module '{Name}'.");
+    }
+
     /// <summary>
     /// Creates and initializes a data module using this definition.
     /// </summary>
@@ -73,6 +122,7 @@ public class ModuleDef : BaseDef
     /// </summary>
     public DataModule Create(UserContext Context)
     {
+        CheckAccess(Context);
         DataModule Result = TypeStore.CreateInstance<DataModule>(ClassName);
         Result.Initialize(this, Context);
         return Result;
@@ -82,7 +132,13 @@ public class ModuleDef : BaseDef
     /// </summary>
     public override void UpdateReferences()
     {
-        Table?.UpdateReferences();
+        if (Table != null)
+        {
+            Table.ModuleDef = this;
+            Table.Master = null;
+            Table.Owner = null;
+            Table.UpdateReferences();
+        }
         foreach (SelectDef Select in SelectList)
             Select.Owner = this;
         foreach (SelectDef Stock in Stocks)
@@ -108,6 +164,102 @@ public class ModuleDef : BaseDef
     }
 
     // ● properties
+    /// <summary>
+    /// Gets whether the top table uses the Tripous string key convention.
+    /// For an incomplete table definition, uses the application's default key type.
+    /// </summary>
+    [JsonIgnore]
+    public bool GuidOids => (Table?.FindField(Table.KeyField)?.DataType ?? DbConfig.DefaultPrimaryKeyType) == DataFieldType.String;
+
+    /// <summary>
+    /// Gets or sets the user levels required to access the module.
+    /// None allows callers without a user context.
+    /// </summary>
+    public UserLevel SecurityLevel { get; set; }
+    /// <summary>
+    /// Gets or sets the group under which the module is listed.
+    /// </summary>
+    public string Group
+    {
+        get => string.IsNullOrWhiteSpace(fGroup) ? "General" : fGroup;
+        set
+        {
+            if (fGroup == value)
+                return;
+            fGroup = value;
+            NotifyPropertyChanged(nameof(Group));
+        }
+    }
+    /// <summary>
+    /// Gets or sets an optional description of the module.
+    /// </summary>
+    public string Description
+    {
+        get => fDescription;
+        set
+        {
+            if (fDescription == value)
+                return;
+            fDescription = value;
+            NotifyPropertyChanged(nameof(Description));
+        }
+    }
+    /// <summary>
+    /// Gets or sets whether the module offers one fixed list SELECT.
+    /// </summary>
+    public bool IsSingleSelect
+    {
+        get => fIsSingleSelect;
+        set
+        {
+            if (fIsSingleSelect == value)
+                return;
+            fIsSingleSelect = value;
+            NotifyPropertyChanged(nameof(IsSingleSelect));
+        }
+    }
+    /// <summary>
+    /// Gets or sets whether a client should show the filter panel.
+    /// </summary>
+    public bool UseFilters
+    {
+        get => fUseFilters;
+        set
+        {
+            if (fUseFilters == value)
+                return;
+            fUseFilters = value;
+            NotifyPropertyChanged(nameof(UseFilters));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the field used as the item caption.
+    /// </summary>
+    public string ItemCaptionField
+    {
+        get => GetItemCaptionField();
+        set
+        {
+            if (fItemCaptionField == value)
+                return;
+            fItemCaptionField = value;
+            NotifyPropertyChanged(nameof(ItemCaptionField));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the display order of direct details, keyed by parent table name.
+    /// </summary>
+    public Dictionary<string, List<string>> DetailOrder
+    {
+        get => fDetailOrder ??= new(StringComparer.OrdinalIgnoreCase);
+        set
+        {
+            if (fDetailOrder == value)
+                return;
+            fDetailOrder = value;
+            NotifyPropertyChanged(nameof(DetailOrder));
+        }
+    }
     /// <summary>
     /// Gets or sets the top table field used for optimistic concurrency.
     /// An empty name disables row version checking. The field must be a native

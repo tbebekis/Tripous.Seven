@@ -29,6 +29,19 @@ public class DataModuleTests
         /// Gets the recorded hook calls and states.
         /// </summary>
         public List<string> Calls { get; } = new();
+        string fDefaultName;
+
+        /// <summary>
+        /// Loads a default value with access to the initialized module.
+        /// </summary>
+        protected override void LoadDefaultValues()
+        {
+            Assert.NotNull(Store);
+            Assert.NotNull(ModuleDef);
+            Assert.NotNull(ItemTable);
+            fDefaultName = "Default";
+        }
+
         /// <summary>
         /// Records the state before insertion.
         /// </summary>
@@ -39,7 +52,7 @@ public class DataModuleTests
         protected override void SetDefaultValues()
         {
             Calls.Add($"Defaults:{State}");
-            ItemTable.Rows[0]["Name"] = "Default";
+            ItemTable.Rows[0]["Name"] = fDefaultName;
         }
         /// <summary>
         /// Records the state after insertion.
@@ -850,6 +863,97 @@ public class DataModuleTests
         }
     }
     /// <summary>
+    /// Completes an opted-in module from table metadata and leaves its registered definition intact.
+    /// </summary>
+    [Fact]
+    public void InitializationCanCompleteTableFieldsFromMetadata()
+    {
+        string ConnectionName = $"Connection_{Guid.NewGuid():N}";
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-table-metadata-{Guid.NewGuid():N}.db");
+        bool Previous = DbConfig.AllowUpdatingTableSchema;
+        DbConnectionInfo Connection = new() { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" };
+        Db.Connections.Add(Connection);
+        try
+        {
+            SqlStore Store = new(Connection);
+            Store.ExecSql("CREATE TABLE Country (Id TEXT PRIMARY KEY, Name VARCHAR(24) NOT NULL, Active INTEGER, Label TEXT GENERATED ALWAYS AS (upper(Name)) STORED)");
+            ModuleDef Definition = new() { Name = "Country", ConnectionName = ConnectionName };
+            Definition.Table.Name = "Country";
+
+            DbConfig.AllowUpdatingTableSchema = false;
+            Assert.Throws<InvalidOperationException>(() => Definition.Create());
+            Assert.Equal("CountryName", Assert.Single(Store.GetSelectSqlSchema("SELECT Name AS CountryName FROM Country", new SqlParams())).ColumnName);
+
+            DbConfig.AllowUpdatingTableSchema = true;
+            DataModule Module = Definition.Create();
+            Assert.Empty(Definition.Table.Fields);
+            Assert.NotSame(Definition, Module.ModuleDef);
+            Assert.False(Module.ModuleDef.Table.Fields.Get("Name").IsNullable);
+            Assert.Equal(24, Module.ItemTable.Columns["Name"].MaxLength);
+            Assert.Contains("Label", Module.ItemTable.Sqls.SelectSql);
+            Assert.DoesNotContain("Label", Module.ItemTable.Sqls.InsertRowSql);
+            Assert.DoesNotContain("Label", Module.ItemTable.Sqls.UpdateRowSql);
+
+            Definition.Table.AddBoolean("Active");
+            DataModule WithBoolean = Definition.Create();
+            Assert.True(WithBoolean.ModuleDef.Table.Fields.Get("Active").IsBoolean);
+            Assert.Single(Definition.Table.Fields);
+        }
+        finally
+        {
+            DbConfig.AllowUpdatingTableSchema = Previous;
+            Db.Connections.Remove(ConnectionName);
+            File.Delete(FilePath);
+        }
+    }
+
+    /// <summary>
+    /// Uses an explicitly declared integer width for a compatible inferred relation field.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SchemaCompletionMatchesDeclaredIntegerRelationWidth(bool DeclareMaster)
+    {
+        string ConnectionName = $"Connection_{Guid.NewGuid():N}";
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-relation-metadata-{Guid.NewGuid():N}.db");
+        bool Previous = DbConfig.AllowUpdatingTableSchema;
+        DbConnectionInfo Connection = new() { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" };
+        Db.Connections.Add(Connection);
+        try
+        {
+            SqlStore Store = new(Connection);
+            Store.ExecSql("CREATE TABLE Country (Id INTEGER PRIMARY KEY)");
+            Store.ExecSql("CREATE TABLE City (Id TEXT PRIMARY KEY, CountryId INTEGER REFERENCES Country(Id))");
+            Store.ExecSql("INSERT INTO Country VALUES (1)");
+            Store.ExecSql("INSERT INTO City VALUES ('C1', 1)");
+
+            ModuleDef Definition = new() { Name = "Countries", ConnectionName = ConnectionName };
+            Definition.Table.Name = "Country";
+            TableDef Detail = Definition.Table.AddDetail("City", "Id", "CountryId");
+            if (DeclareMaster)
+                Definition.Table.AddInteger("Id");
+            else
+                Detail.AddInteger("CountryId");
+
+            DbConfig.AllowUpdatingTableSchema = true;
+            DataModule Module = Definition.Create();
+            Assert.Equal(typeof(int), Module.ItemTable.Columns["Id"].DataType);
+            Assert.Equal(typeof(int), Module.GetTable("City").Columns["CountryId"].DataType);
+            Module.Edit(1);
+            Assert.Equal(1, Assert.Single(Module.GetTable("City").Rows.Cast<DataRow>())["CountryId"]);
+            Assert.Equal(DeclareMaster, Definition.Table.Fields.Contains("Id"));
+            Assert.Equal(!DeclareMaster, Detail.Fields.Contains("CountryId"));
+        }
+        finally
+        {
+            DbConfig.AllowUpdatingTableSchema = Previous;
+            Db.Connections.Remove(ConnectionName);
+            File.Delete(FilePath);
+        }
+    }
+
+    /// <summary>
     /// Both list SELECT overloads apply the configured default row limit.
     /// </summary>
     [Fact]
@@ -902,10 +1006,22 @@ public class DataModuleTests
             Assert.IsType<CustomModule>(Module);
             Assert.True(Module.IsInitialized);
             Assert.Equal(Name, Module.Name);
+            Assert.Equal(Name, Module.ToString());
             Assert.Null(Module.CurrentRow);
             Assert.Equal(DBNull.Value, Module.Id);
+            Assert.True(Module.DetailsActive);
+            Module.DetailsActive = false;
+            Assert.False(Module.ItemTable.DetailsActive);
+            Assert.False(Module["Address"].DetailsActive);
+            Module.DetailsActive = true;
+            Assert.True(Module["Address"].DetailsActive);
+            Assert.Same(Module.ItemTable, Module.RowProviderHost);
             Assert.Same(Module.ItemTable, Module.FindTable("CUSTOMER"));
             Assert.Same(Module.Tables.Get("Address"), Module.GetTable("address"));
+            Assert.Same(Module.GetTable("Address"), Module["ADDRESS"]);
+            Assert.True(Module.TableExists("address"));
+            Assert.False(Module.TableExists("missing"));
+            Assert.False(Module.TableExists(Module.ListTable.TableName));
             Assert.Null(Module.FindTable("missing"));
             Assert.Throws<KeyNotFoundException>(() => Module.GetTable("missing"));
             Assert.NotSame(Module, Other);

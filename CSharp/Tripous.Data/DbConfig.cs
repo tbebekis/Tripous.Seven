@@ -24,6 +24,13 @@ static public class DbConfig
     /// </summary>
     static public int DefaultRowLimit { get; set; } = 400;
     /// <summary>
+    /// Updates the item table field definitions from database table metadata during module initialization.
+    /// When enabled, missing columns are added and can participate in generated writes. This allows
+    /// tests and simple modules to specify just the table name when the default key name applies.
+    /// Defaults to false. Reading SELECT result metadata is independent of this setting.
+    /// </summary>
+    static public bool AllowUpdatingTableSchema { get; set; }
+    /// <summary>
     /// Gets or sets the default type of a primary key when no type is specified.
     /// </summary>
     static public DataFieldType DefaultPrimaryKeyType { get; set; } = DataFieldType.String;

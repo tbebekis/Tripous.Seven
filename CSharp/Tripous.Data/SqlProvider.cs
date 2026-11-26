@@ -13,6 +13,12 @@ namespace Tripous.Data;
 /// </summary>
 public abstract class SqlProvider
 {
+    /// <summary>
+    /// Maps a native column declaration when an item field has no explicit type.
+    /// </summary>
+    internal virtual DataFieldType GetMetadataFieldType(DbMetaColumn Column)
+        => throw new NotSupportedException($"Cannot infer a field type for column '{Column.Name}' using {GetType().Name}.");
+
     // ● public
     /// <summary>
     /// The common prefix used for named parameters in SQL text.

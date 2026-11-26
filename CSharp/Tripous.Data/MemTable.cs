@@ -83,10 +83,10 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
         else
             fDetails.RefreshFromMaster();
     }
-    void SetCurrentRow(DataRow Row)
+    void SetCurrentRow(DataRow Row, bool Force = false)
     {
         DataRow Value = IsValidRow(Row) ? Row : null;
-        if (ReferenceEquals(fCurrentRow, Value))
+        if (!Force && ReferenceEquals(fCurrentRow, Value))
             return;
         fCurrentRow = Value;
         if (!EventsDisabled)
@@ -138,7 +138,7 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
         }
     }
     /// <summary>
-    /// Filters this detail for the current row of its master.
+    /// Applies the filter for the current master row, including during explicit item-tree loading.
     /// </summary>
     internal void UpdateFromMaster()
     {
@@ -479,13 +479,30 @@ public class MemTable : DataTable, IRowProvider, IRowProviderHost
     /// </summary>
     public void UpdateCurrentRow()
     {
-        DataRow Row = DataView.Count > 0 ? DataView[0].Row : null;
-        DataRow Value = IsValidRow(Row) ? Row : null;
-        bool SameRow = ReferenceEquals(fCurrentRow, Value);
-        CurrentRow = Value;
-        // Force CurrentRowChanged for the first visible row so the UI can resynchronize.
-        if (SameRow && !EventsDisabled)
-            CurrentRowChanged?.Invoke(this, EventArgs.Empty);
+        SetCurrentRow(DataView.Count > 0 ? DataView[0].Row : null, Force: true);
+    }
+
+    /// <summary>
+    /// Clears the current row and raises CurrentRowChanged even when it was already null.
+    /// Event suspension still applies. The rows in the table are preserved.
+    /// </summary>
+    public void SetCurrentRowToNull() => SetCurrentRow(null, Force: true);
+
+    /// <summary>
+    /// Synchronizes this detail with the current master row when the relationship is active.
+    /// If the relationship is inactive, clears the master filter. The user filter and sort
+    /// remain in effect, and the master's current row is preserved.
+    /// </summary>
+    public void MasterRowChanged()
+    {
+        if (Master == null)
+            return;
+        if (!Master.DetailsActive)
+        {
+            DetailRowFilter = "";
+            return;
+        }
+        UpdateFromMaster();
     }
 
     /// <summary>

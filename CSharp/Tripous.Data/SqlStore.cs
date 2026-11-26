@@ -49,6 +49,11 @@ public class SqlStore
     /// </summary>
     internal string ApplyRowLimit(string SqlText, int RowLimit) => fProvider.ApplyRowLimit(SqlText, RowLimit);
 
+    /// <summary>
+    /// Maps a native column declaration to the provider's default field type.
+    /// </summary>
+    internal DataFieldType GetMetadataFieldType(DbMetaColumn Column) => fProvider.GetMetadataFieldType(Column);
+
     // ● private logging
     /// <summary>
     /// Logs a prepared SQL command.
@@ -176,7 +181,7 @@ public class SqlStore
     /// <summary>
     /// Reads the result column metadata of a SELECT without loading its rows.
     /// </summary>
-    public ReadOnlyCollection<DbColumn> GetSelectSchema(string SqlText, SqlParams Params)
+    public ReadOnlyCollection<DbColumn> GetSelectSqlSchema(string SqlText, SqlParams Params)
     {
         ArgumentNullException.ThrowIfNull(Params);
         using (SqlTransactionContext Context = BeginTransactionContext())
