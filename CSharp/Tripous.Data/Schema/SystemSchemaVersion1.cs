@@ -39,6 +39,34 @@ public class SystemSchemaVersion1 : SchemaVersionDef
         return Table;
     }
 
+    /// <summary>
+    /// Defines language IDs, codes, display names, culture mapping and availability.
+    /// </summary>
+    static DataTableDef CreateLanguageTable()
+    {
+        DataTableDef Table = new() { Name = DbConfig.SysLangTableName };
+        Table.AddId();
+        Table.AddString("Code", 16, Required: true).SetUnique();
+        Table.AddString("Name", 96, Required: true).SetUnique();
+        Table.AddString("CultureName", 32);
+        Table.AddBoolean("IsDefault", Required: true, DefaultExpression: "0");
+        Table.AddBoolean("IsActive", Required: true, DefaultExpression: "1");
+        return Table;
+    }
+    /// <summary>
+    /// Defines the resource ID, owning language, lookup key and translated text.
+    /// </summary>
+    static DataTableDef CreateResourcesTable(string LanguageTableName)
+    {
+        DataTableDef Table = new() { Name = DbConfig.SysStrResTableName };
+        Table.AddId();
+        Table.AddString("LanguageId", 40, Required: true).SetForeignKey(LanguageTableName + ".Id");
+        Table.AddString("ResKey", 96, Required: true);
+        Table.AddTextBlob("ResValue", Required: true);
+        Table.AddUniqueConstraint("LanguageId, ResKey");
+        return Table;
+    }
+
     // ● protected
     /// <summary>
     /// Registers the initial system tables.
@@ -47,6 +75,10 @@ public class SystemSchemaVersion1 : SchemaVersionDef
     {
         DataTableDef Table = CreateNumberSeriesTable();
         Version.Tables.Add(new SchemaItem { Name = Table.Name, SqlText = Table.GetDefText() });
+        DataTableDef Languages = CreateLanguageTable();
+        DataTableDef Resources = CreateResourcesTable(Languages.Name);
+        Version.Tables.Add(new SchemaItem { Name = Languages.Name, SqlText = Languages.GetDefText() });
+        Version.Tables.Add(new SchemaItem { Name = Resources.Name, SqlText = Resources.GetDefText() });
     }
 
     // ● properties

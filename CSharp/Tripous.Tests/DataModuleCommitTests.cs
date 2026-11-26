@@ -14,6 +14,63 @@ namespace Tripous.Tests;
 [Collection("Database registry")]
 public class DataModuleCommitTests
 {
+    /// <summary>
+    /// Parallel remote commits use the audit identity supplied by the host for each request.
+    /// </summary>
+    [Fact]
+    public async Task RemoteCommitsKeepUserContextsSeparate()
+    {
+        string Name = $"audit-{Guid.NewGuid():N}";
+        string FilePath = Path.Combine(Path.GetTempPath(), $"{Name}.db");
+        ModuleDef Definition = new() { Name = Name, ConnectionName = Name };
+        Definition.Table.Name = "Customer";
+        foreach (string Field in new[] { "Id", "CreatedBy", "ModifiedBy" })
+            Definition.Table.Fields.Add(new FieldDef { Name = Field });
+
+        try
+        {
+            Db.Connections.Add(new DbConnectionInfo { Name = Name, ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            DataRegistry.Modules.Add(Definition);
+            SqlStore Store = SqlStores.CreateSqlStore(Name);
+            Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, CreatedBy TEXT, ModifiedBy TEXT)");
+            RemOp.Initialize();
+
+            RemoteRequest CreateRequest(string Key)
+            {
+                DataModule Input = Definition.Create(new UserContext(new AppUser { Id = "client" }));
+                Input.Insert();
+                Input.ItemTable.Rows[0]["Id"] = Key;
+                RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.Commit" };
+                Request.Params["ModuleName"] = Name;
+                Request.Params["CurrentUserId"] = "client";
+                Request.Params["DataModule"] = new JsonDataModule(Input);
+                return Json.Deserialize<RemoteRequest>(Json.Serialize(Request));
+            }
+
+            RemoteRequest First = CreateRequest("A");
+            RemoteRequest Second = CreateRequest("B");
+            RemoteResponse Anonymous = RemoteOperations.Execute(CreateRequest("C"));
+            Assert.False(Anonymous.IsSuccess);
+            Assert.Contains("current user ID", Anonymous.ErrorText);
+
+            RemoteResponse[] Responses = await Task.WhenAll(
+                Task.Run(() => RemoteOperations.Execute(First, new UserContext(new AppUser { Id = "alice" }))),
+                Task.Run(() => RemoteOperations.Execute(Second, new UserContext(new AppUser { Id = "bob" }))));
+            Assert.All(Responses, Response => Assert.True(Response.IsSuccess, Response.ErrorText));
+            DataTable Rows = Store.Select("SELECT CreatedBy, ModifiedBy FROM Customer ORDER BY Id");
+            Assert.Equal(2, Rows.Rows.Count);
+            Assert.Equal(new object[] { "alice", "alice" }, Rows.Rows[0].ItemArray);
+            Assert.Equal(new object[] { "bob", "bob" }, Rows.Rows[1].ItemArray);
+        }
+        finally
+        {
+            DataRegistry.Modules.Remove(Definition);
+            Db.Connections.Remove(Name);
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+
     // ● public types
     /// <summary>
     /// Fails in the TableSet after the database commit.

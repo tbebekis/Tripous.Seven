@@ -67,10 +67,14 @@ public class ModuleDef : BaseDef
     /// <summary>
     /// Creates and initializes a data module using this definition.
     /// </summary>
-    public DataModule Create()
+    public DataModule Create() => Create(null);
+    /// <summary>
+    /// Creates and initializes a data module for a session or request.
+    /// </summary>
+    public DataModule Create(UserContext Context)
     {
         DataModule Result = TypeStore.CreateInstance<DataModule>(ClassName);
-        Result.Initialize(this);
+        Result.Initialize(this, Context);
         return Result;
     }
     /// <summary>

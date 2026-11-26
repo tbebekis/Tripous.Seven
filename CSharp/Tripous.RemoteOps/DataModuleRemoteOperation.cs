@@ -58,7 +58,7 @@ public abstract class DataModuleRemoteOperation : RemoteOperation
         string ModuleName = GetStringParam(Request, "ModuleName");
         if (string.IsNullOrWhiteSpace(ModuleName))
             throw new ArgumentException("A data module name is required.");
-        return DataRegistry.CreateModule(ModuleName);
+        return DataRegistry.CreateModule(ModuleName, UserContext);
     }
     /// <summary>
     /// Returns the data module packet supplied by a direct or JSON request.

@@ -68,6 +68,39 @@ public class DataModule
     /// </summary>
     protected TableSet TableSet;
 
+    // ● audit
+    /// <summary>
+    /// Sets declared audit fields on the main item row.
+    /// A declared user audit field requires an application user ID.
+    /// </summary>
+    protected virtual void SetAuditValues()
+    {
+        if (ItemTable == null || ItemTable.Rows.Count != 1)
+            return;
+
+        DataRow Row = ItemTable.Rows[0];
+        if (Row.RowState == DataRowState.Deleted)
+            return;
+
+        string UserId = CurrentUserId;
+        DataColumnCollection Columns = ItemTable.Columns;
+        if ((Columns.Contains("CreatedBy") || Columns.Contains("ModifiedBy")) && string.IsNullOrWhiteSpace(UserId))
+            throw new InvalidOperationException("A current user ID is required for the item audit fields.");
+
+        DateTime Now = DateTime.UtcNow;
+        if (Row.RowState == DataRowState.Added)
+        {
+            if (Columns.Contains("CreatedBy"))
+                Row["CreatedBy"] = UserId;
+            if (Columns.Contains("CreatedAt"))
+                Row["CreatedAt"] = Now;
+        }
+        if (Columns.Contains("ModifiedBy"))
+            Row["ModifiedBy"] = UserId;
+        if (Columns.Contains("ModifiedAt"))
+            Row["ModifiedAt"] = Now;
+    }
+
     // ● code provider
     /// <summary>
     /// Assigns a registered code provider's value to a new item with an empty code field.
@@ -214,6 +247,25 @@ public class DataModule
     }
 
     // ● initialization
+    /// <summary>
+    /// Binds a user context before running module initialization.
+    /// </summary>
+    public void Initialize(ModuleDef Definition, UserContext Context)
+    {
+        if (ModuleDef != null)
+            throw new InvalidOperationException("The data module is already initialized.");
+        UserContext = Context;
+        try
+        {
+            Initialize(Definition);
+        }
+        catch
+        {
+            if (!IsInitialized)
+                UserContext = null;
+            throw;
+        }
+    }
     /// <summary>
     /// Initializes the module from its definition and configured connection.
     /// Throws if this instance was already successfully initialized.
@@ -363,6 +415,7 @@ public class DataModule
             {
                 TableSet.ProcessInsert();
                 SetDefaultValues();
+                SetAuditValues();
             }
             catch
             {
@@ -440,6 +493,7 @@ public class DataModule
     {
         LastTableSetResult = null;
         EndEdit();
+        SetAuditValues();
         CheckCanCommit(Reselect);
         fCommitting++;
         try
@@ -634,6 +688,7 @@ public class DataModule
             if (ShouldPost)
             {
                 EndEdit();
+                SetAuditValues();
                 CheckCanCommit(false);
             }
             return ShouldPost;
@@ -815,6 +870,14 @@ public class DataModule
     public virtual MemTable GetTable(string TableName) => Tables.Get(TableName);
 
     // ● properties
+    /// <summary>
+    /// Gets the session or request context supplied during initialization.
+    /// </summary>
+    public UserContext UserContext { get; private set; }
+    /// <summary>
+    /// Gets the application user ID used for item audit fields.
+    /// </summary>
+    public string CurrentUserId => UserContext?.CurrentUser?.Id;
     /// <summary>
     /// Gets whether this module has been initialized successfully.
     /// </summary>

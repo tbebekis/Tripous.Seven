@@ -18,6 +18,10 @@ static public class DataRegistry
     /// Creates an initialized data module from its registered name.
     /// </summary>
     static public DataModule CreateModule(string Name) => Modules.Get(Name).Create();
+    /// <summary>
+    /// Creates a module for the user context supplied by the host.
+    /// </summary>
+    static public DataModule CreateModule(string Name, UserContext Context) => Modules.Get(Name).Create(Context);
 
     // ● properties
     /// <summary>

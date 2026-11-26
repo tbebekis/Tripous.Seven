@@ -54,7 +54,7 @@ public class SchemaTests
         Assert.Throws<InvalidOperationException>(() => Schema.CheckDescriptor());
     }
     /// <summary>
-    /// The system schema creates the number series table once and records its version.
+    /// The initial system schema creates the number series, languages and resources.
     /// </summary>
     [Fact]
     public void ExecutesSystemSchema()
@@ -66,16 +66,18 @@ public class SchemaTests
         {
             Db.Connections.Add(Info);
             Schema Schema = SystemSchema.Register(Name);
+            SqlStore Store = new(Info);
             Assert.Same(Schema, SystemSchema.Register(Name.ToUpperInvariant()));
-            Assert.Single(Schema.Versions);
-            Assert.Single(Schema.Versions[0].Tables);
+            Assert.Equal(3, Assert.Single(Schema.Versions).Tables.Count);
             Assert.Throws<InvalidOperationException>(() => new ConflictingVersion().Register(Schema));
             Schema.Execute();
             Schema.Execute();
-            SqlStore Store = new(Info);
             Assert.True(Store.TableExists("SYS_INI"));
             Assert.True(Store.TableExists("SYS_NUMBER_SERIES"));
+            Assert.True(Store.TableExists("SYS_LANG"));
+            Assert.True(Store.TableExists("SYS_STR_RES"));
             Assert.Equal(1, new DbIni(Info).ReadInteger($"Database.Version.{Name}.System", -1));
+            CheckLocalizedResources(Store);
             Store.ExecSql("INSERT INTO SYS_NUMBER_SERIES (Id, Code, Name, Pattern) VALUES ('1', 'A', 'Alpha', '{XXXX}')");
             DataRow Row = Store.Select("SELECT ResetPeriodId, NextNumber, IsActive FROM SYS_NUMBER_SERIES").Rows[0];
             Assert.Equal(0L, Convert.ToInt64(Row[0]));
@@ -92,6 +94,24 @@ public class SchemaTests
             if (File.Exists(FilePath))
                 File.Delete(FilePath);
         }
+    }
+
+    static void CheckLocalizedResources(SqlStore Store)
+    {
+        Store.ExecSql("INSERT INTO SYS_LANG (Id, Code, Name) VALUES ('E', 'EN', 'English'), ('G', 'EL', 'Greek')");
+        SysStrResLocalizer Localizer = new(Store);
+        SysStrResLocalizer Other = new(Store) { AutoInsertMissingKeys = false };
+        Assert.Equal("No write", Other.GetText("G", "NoWrite", "No write"));
+        Other.AutoInsertMissingKeys = true;
+        Assert.Equal("Customer Name", Localizer.GetText("G", "Customer__Name", "Customer Name"));
+        Assert.Equal("Customer Name", Other.GetText("G", "Customer__Name", "Ignored"));
+        Assert.Equal(1L, Store.Select("SELECT COUNT(*) FROM SYS_STR_RES WHERE LanguageId = 'E' AND ResKey = 'Customer__Name'").Rows[0][0]);
+        Store.ExecSql("INSERT INTO SYS_STR_RES (Id, LanguageId, ResKey, ResValue) VALUES ('R', 'G', 'Customer__Name', 'Όνομα πελάτη')");
+        Localizer.MarkDirty();
+        Assert.Equal("Όνομα πελάτη", Localizer.GetText("G", "customer__name", "Fallback"));
+        Localizer.AutoInsertMissingKeys = false;
+        Assert.Equal("Default", Localizer.GetText("G", "Disabled", "Default"));
+        Assert.Empty(Store.Select("SELECT Id FROM SYS_STR_RES WHERE ResKey = 'Disabled'").Rows);
     }
     /// <summary>
     /// Schemas are matched by domain and connection without case distinction.

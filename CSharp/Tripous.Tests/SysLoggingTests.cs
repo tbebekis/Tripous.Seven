@@ -14,7 +14,54 @@ namespace Tripous.Tests;
 [Collection("Sys logging")]
 public class SysLoggingTests
 {
+    /// <summary>
+    /// Simulates a diagnostic value that cannot be formatted.
+    /// </summary>
+    sealed class UnformattableValue
+    {
+        public override string ToString() => throw new InvalidOperationException("Formatting failed");
+    }
+
     // ● public
+    /// <summary>
+    /// Debug logging preserves both aggregate branches and the original exception despite bad metadata.
+    /// </summary>
+    [Fact]
+    public void DebugLoggingKeepsAggregateBranchesWhenDataFormattingFails()
+    {
+        bool PreviousDebug = Sys.DebugMode;
+        Action<string> PreviousUi = Sys.UiLogProc;
+        Action<Exception> PreviousLog = Sys.LogExceptionProc;
+        Exception First = new InvalidOperationException("Operation failed");
+        First.Data["Bad"] = new UnformattableValue();
+        First.Data["Context"] = "Customer";
+        Exception Error = new AggregateException(First, new Exception("Cleanup failed", new Exception("Nested cause")));
+        List<string> Messages = new();
+        Exception Logged = null;
+        try
+        {
+            Sys.DebugMode = true;
+            Sys.UiLogProc = Messages.Add;
+            Sys.LogExceptionProc = Value => Logged = Value;
+            Sys.LogError(Error);
+
+            Assert.Same(Error, Logged);
+            string Message = Assert.Single(Messages);
+            Assert.Contains("exception data entry unavailable", Message);
+            Assert.Contains("Context: Customer", Message);
+            Assert.Contains("Nested cause", Message);
+            Sys.DebugMode = false;
+            Assert.Contains("Nested cause", Error.GetErrorTextFull());
+            Assert.DoesNotContain("Context: Customer", Error.GetErrorTextFull());
+        }
+        finally
+        {
+            Sys.DebugMode = PreviousDebug;
+            Sys.UiLogProc = PreviousUi;
+            Sys.LogExceptionProc = PreviousLog;
+        }
+    }
+
     /// <summary>
     /// Routes messages and exceptions to their respective callbacks and the UI callback.
     /// </summary>

@@ -35,4 +35,10 @@ public abstract class RemoteOperation
     /// Executes the operation for the supplied request.
     /// </summary>
     public abstract RemoteResponse Execute(RemoteRequest Request);
+
+    // ● properties
+    /// <summary>
+    /// Gets the user context assigned by the dispatcher for this execution.
+    /// </summary>
+    protected internal UserContext UserContext { get; internal set; }
 }

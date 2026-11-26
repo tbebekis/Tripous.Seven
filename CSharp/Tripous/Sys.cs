@@ -45,7 +45,11 @@ static public class Sys
     static public void LogError(Exception Error)
     {
         ArgumentNullException.ThrowIfNull(Error);
-        UiLog(DebugMode ? Error.GetErrorTextFull() : Error.Message);
+        if (UiLogProc != null)
+        {
+            try { UiLog(DebugMode ? Error.GetErrorTextFull() : Error.Message); }
+            catch { UiLog(Error.GetType().FullName); }
+        }
         try { LogExceptionProc?.Invoke(Error); }
         catch { }
     }

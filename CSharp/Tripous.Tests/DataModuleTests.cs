@@ -296,6 +296,44 @@ public class DataModuleTests
 
     // ● public
     /// <summary>
+    /// Declared user audit fields require an application user and are saved on the main item.
+    /// </summary>
+    [Fact]
+    public void ItemAuditFieldsRequireUserAndPreserveCreatorOnUpdate()
+    {
+        string ConnectionName = $"Connection_{Guid.NewGuid():N}";
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-audit-{Guid.NewGuid():N}.db");
+        ModuleDef Definition = CreateDefinition("CustomerModule", ConnectionName);
+        Definition.Table.Details.Clear();
+        Definition.Table.Fields.Add(new FieldDef { Name = "CreatedBy" });
+        Definition.Table.Fields.Add(new FieldDef { Name = "ModifiedBy" });
+        Definition.Table.Fields.Add(new FieldDef { Name = "CreatedAt", DataType = DataFieldType.DateTime });
+        try
+        {
+            Db.Connections.Add(new DbConnectionInfo { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            DataModule Module = Definition.Create();
+            Module.Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT, CreatedBy TEXT, ModifiedBy TEXT, CreatedAt TEXT)");
+            Assert.Throws<InvalidOperationException>(Module.Insert);
+            Module = Definition.Create(new UserContext(new AppUser { Id = "creator" }));
+            Module.Insert();
+            object Id = Module.Commit(false);
+            DataModule Editor = Definition.Create(new UserContext(new AppUser { Id = "editor" }));
+            Assert.True(Editor.Edit(Id));
+            Editor.Commit(false);
+            DataRow Saved = Assert.Single(Module.Store.Select("SELECT CreatedBy, ModifiedBy, CreatedAt FROM Customer").Rows.Cast<DataRow>());
+            Assert.Equal("creator", Saved["CreatedBy"]);
+            Assert.Equal("editor", Saved["ModifiedBy"]);
+            Assert.False(Saved.IsNull("CreatedAt"));
+        }
+        finally
+        {
+            Db.Connections.Remove(ConnectionName);
+            if (File.Exists(FilePath))
+                File.Delete(FilePath);
+        }
+    }
+
+    /// <summary>
     /// Each operation invokes its overridable check before proceeding.
     /// </summary>
     [Fact]

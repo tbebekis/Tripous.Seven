@@ -48,6 +48,14 @@ static public class DbConfig
     /// </summary>
     static public string SysNumberSeriesTableName { get; set; } = "SYS_NUMBER_SERIES";
     /// <summary>
+    /// Gets or sets the system language table name.
+    /// </summary>
+    static public string SysLangTableName { get; set; } = "SYS_LANG";
+    /// <summary>
+    /// Gets or sets the system string resource table name.
+    /// </summary>
+    static public string SysStrResTableName { get; set; } = "SYS_STR_RES";
+    /// <summary>
     /// Gets or sets the key field name of the system settings table.
     /// </summary>
     static public string SysDbIniEntryField { get; set; } = "EntryKey";

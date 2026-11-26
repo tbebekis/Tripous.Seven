@@ -67,7 +67,11 @@ static public class RemoteOperations
     /// <summary>
     /// Executes a request using a new operation instance and returns errors in the response.
     /// </summary>
-    static public RemoteResponse Execute(RemoteRequest Request)
+    static public RemoteResponse Execute(RemoteRequest Request) => Execute(Request, null);
+    /// <summary>
+    /// Executes a request with the user context provided separately by the server host.
+    /// </summary>
+    static public RemoteResponse Execute(RemoteRequest Request, UserContext Context)
     {
         try
         {
@@ -76,6 +80,7 @@ static public class RemoteOperations
                 throw new ArgumentException("The request ID must be a valid GUID.", nameof(Request));
             Type OperationType = Get(Request.OperationName);
             RemoteOperation Operation = (RemoteOperation)Activator.CreateInstance(OperationType);
+            Operation.UserContext = Context;
             return Operation.Execute(Request) ?? throw new InvalidOperationException("The remote operation returned no response.");
         }
         catch (Exception Error)
