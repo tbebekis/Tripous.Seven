@@ -10,6 +10,10 @@ namespace Tripous.Data;
 
 /// <summary>
 /// Provides driver-specific database operations and prepares SQL commands.
+/// <para><strong>NOTE: </strong>Every public method or property is virtual or abstract.
+/// Callers use the same SqlProvider API for every database. Derived providers
+/// override operations that need driver-specific behavior, so callers can work
+/// with common ADO.NET types without casting to a concrete provider.</para>
 /// </summary>
 public abstract class SqlProvider
 {
@@ -28,7 +32,198 @@ public abstract class SqlProvider
     /// Creates a connection for the specified connection string.
     /// The caller owns the returned connection.
     /// </summary>
-    public abstract DbConnection CreateConnection(string ConnectionString);
+    public virtual DbConnection CreateConnection(string ConnectionString)
+    {
+        string Normalized = NormalizeConnectionString(ConnectionString);
+        DbConnection Connection = Factory.CreateConnection()
+            ?? throw new NotSupportedException($"The {Name} factory does not create connections.");
+        try
+        {
+            Connection.ConnectionString = Normalized;
+            return Connection;
+        }
+        catch
+        {
+            Connection.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Opens and closes a connection to verify that the database can be reached.
+    /// Set ThrowIfNot to propagate the connection error.
+    /// </summary>
+    public virtual bool CanConnect(string ConnectionString, bool ThrowIfNot = false)
+    {
+        try
+        {
+            using DbConnection Connection = OpenConnection(GetConnectionStringForCheck(ConnectionString));
+            return true;
+        }
+        catch (Exception) when (!ThrowIfNot)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Tests the connection described by the supplied settings.
+    /// Set ThrowIfNot to propagate the connection error.
+    /// </summary>
+    public virtual bool CanConnect(DbConnectionInfo ConnectionInfo, bool ThrowIfNot = false)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        return CanConnect(ConnectionInfo.ConnectionString, ThrowIfNot);
+    }
+
+    /// <summary>
+    /// Verifies the connection and propagates any error.
+    /// </summary>
+    public virtual void EnsureConnection(string ConnectionString) => CanConnect(ConnectionString, ThrowIfNot: true);
+
+    /// <summary>
+    /// Verifies the supplied connection settings and propagates any connection error.
+    /// </summary>
+    public virtual void EnsureConnection(DbConnectionInfo ConnectionInfo) => CanConnect(ConnectionInfo, ThrowIfNot: true);
+
+    /// <summary>
+    /// Opens a connection using the supplied settings. The caller owns the returned connection.
+    /// </summary>
+    public virtual DbConnection OpenConnection(DbConnectionInfo ConnectionInfo)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        return OpenConnection(ConnectionInfo.ConnectionString);
+    }
+
+    /// <summary>
+    /// Opens a connection and disposes it if opening fails.
+    /// The caller owns the returned connection.
+    /// </summary>
+    public virtual DbConnection OpenConnection(string ConnectionString)
+    {
+        DbConnection Connection = CreateConnection(ConnectionString);
+        try
+        {
+            Connection.Open();
+            return Connection;
+        }
+        catch
+        {
+            Connection.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Returns the database engine version using the supplied connection settings.
+    /// </summary>
+    public virtual string GetServerVersion(DbConnectionInfo ConnectionInfo)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        return GetServerVersion(ConnectionInfo.ConnectionString);
+    }
+
+    /// <summary>
+    /// Reads the database engine version reported by an open connection.
+    /// Uses the same connection settings as a connection check.
+    /// </summary>
+    public virtual string GetServerVersion(string ConnectionString)
+    {
+        using DbConnection Connection = OpenConnection(GetConnectionStringForCheck(ConnectionString));
+        return Connection.ServerVersion;
+    }
+
+    /// <summary>
+    /// Starts a transaction for the supplied connection settings.
+    /// The caller owns the returned context, which owns both resources.
+    /// </summary>
+    public virtual SqlTransactionContext BeginTransactionContext(DbConnectionInfo ConnectionInfo)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        return BeginTransactionContext(ConnectionInfo.ConnectionString);
+    }
+
+    /// <summary>
+    /// Starts a transaction and returns its owning context.
+    /// If opening the connection or starting the transaction fails, disposes the context.
+    /// </summary>
+    public virtual SqlTransactionContext BeginTransactionContext(string ConnectionString)
+    {
+        SqlTransactionContext Context = new(CreateConnection(ConnectionString));
+        try
+        {
+            Context.BeginTransaction();
+            return Context;
+        }
+        catch
+        {
+            Context.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Returns the connection string to use when testing a connection.
+    /// </summary>
+    protected virtual string GetConnectionStringForCheck(string ConnectionString) => ConnectionString;
+
+    /// <summary>
+    /// Builds a connection string from the provider's database and connection settings.
+    /// </summary>
+    public virtual string CreateConnectionString(string Server, string Database, string UserName, string Password)
+        => throw new NotSupportedException("This provider does not build connection strings.");
+
+    /// <summary>
+    /// Resolves provider-specific settings before using a connection string.
+    /// </summary>
+    public virtual string NormalizeConnectionString(string ConnectionString) => ConnectionString;
+
+    /// <summary>
+    /// Checks whether the database identified by the connection string exists.
+    /// The default implementation tests whether a connection can be opened.
+    /// </summary>
+    public virtual bool DatabaseExists(string ConnectionString) => CanConnect(ConnectionString);
+
+    /// <summary>
+    /// Checks database existence using the supplied connection settings.
+    /// </summary>
+    public virtual bool DatabaseExists(DbConnectionInfo ConnectionInfo)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        return DatabaseExists(ConnectionInfo.ConnectionString);
+    }
+
+    /// <summary>
+    /// Builds an expression that concatenates the supplied SQL expressions.
+    /// </summary>
+    public virtual string Concat(params string[] Parts)
+        => string.Join(" || ", Parts);
+
+    /// <summary>
+    /// Gets the SQL expression for the database server's current date and time.
+    /// </summary>
+    public virtual string ServerDateTimeSql
+        => throw new NotSupportedException("This provider does not define a server date-time expression.");
+
+    /// <summary>
+    /// Gets the opening delimiter for a quoted database object name.
+    /// </summary>
+    public virtual string ObjectStartDelimiter => "\"";
+
+    /// <summary>
+    /// Gets the closing delimiter for a quoted database object name.
+    /// </summary>
+    public virtual string ObjectEndDelimiter => "\"";
+
+    /// <summary>
+    /// Quotes a single database object name and escapes embedded closing delimiters.
+    /// </summary>
+    public virtual string QuoteName(string Name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Name);
+        return ObjectStartDelimiter + Name.Replace(ObjectEndDelimiter, ObjectEndDelimiter + ObjectEndDelimiter) + ObjectEndDelimiter;
+    }
+
     /// <summary>
     /// Applies a positive row limit to a list SELECT statement.
     /// The Tripous framework supplies the limit; list SQL must not contain one.
@@ -54,12 +249,34 @@ public abstract class SqlProvider
         throw new NotSupportedException("This provider does not support database creation.");
     }
     /// <summary>
+    /// Creates the database described by the supplied settings, or returns false if it exists.
+    /// </summary>
+    public virtual bool CreateDatabase(DbConnectionInfo ConnectionInfo)
+    {
+        ArgumentNullException.ThrowIfNull(ConnectionInfo);
+        return CreateDatabase(ConnectionInfo.ConnectionString);
+    }
+
+    /// <summary>
     /// Returns SQL for obtaining the next value of a named generator.
     /// </summary>
     public virtual string NextIdByGeneratorSql(string GeneratorName)
     {
         throw new NotSupportedException("This provider does not support generators.");
     }
+    /// <summary>
+    /// Sets the stored counter for a table's database-generated keys.
+    /// This is an administrative operation that can affect which IDs are generated later.
+    /// </summary>
+    public virtual void SetTableGeneratorTo(string ConnectionString, string TableName, long Value)
+        => throw new NotSupportedException("This provider does not support setting a table generator.");
+
+    /// <summary>
+    /// Sets the table generator using a 32-bit value.
+    /// </summary>
+    public virtual void SetTableGeneratorTo(string ConnectionString, string TableName, int Value)
+        => SetTableGeneratorTo(ConnectionString, TableName, (long)Value);
+
     /// <summary>
     /// Returns SQL for obtaining the last generated ID in the current connection.
     /// </summary>
@@ -125,6 +342,48 @@ public abstract class SqlProvider
         return Result.ToString();
     }
     /// <summary>
+    /// Creates a command and binds the supplied Tripous parameters.
+    /// The caller owns the returned command.
+    /// </summary>
+    public virtual DbCommand CreateCommand(DbConnection Connection, string SqlText, SqlParams Params)
+        => CreateCommandCore(Connection, SqlText, Params, null, null);
+
+    /// <summary>
+    /// Creates a prepared command on the transaction's connection with the requested timeout.
+    /// The caller owns the returned command.
+    /// </summary>
+    public virtual DbCommand CreateCommand(DbTransaction Transaction, string SqlText, SqlParams Params, int CommandTimeout)
+    {
+        ArgumentNullException.ThrowIfNull(Transaction);
+        DbConnection Connection = Transaction.Connection
+            ?? throw new InvalidOperationException("The transaction has no active connection.");
+        return CreateCommandCore(Connection, SqlText, Params, Transaction, CommandTimeout);
+    }
+
+    /// <summary>
+    /// Sets the command's execution settings before applying provider-specific preparation.
+    /// </summary>
+    DbCommand CreateCommandCore(DbConnection Connection, string SqlText, SqlParams Params, DbTransaction Transaction, int? CommandTimeout)
+    {
+        ArgumentNullException.ThrowIfNull(Connection);
+        DbCommand Command = Connection.CreateCommand();
+        try
+        {
+            if (Transaction != null)
+                Command.Transaction = Transaction;
+            if (CommandTimeout.HasValue)
+                Command.CommandTimeout = CommandTimeout.Value;
+            PrepareCommand(Command, SqlText, Params);
+            return Command;
+        }
+        catch
+        {
+            Command.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Prepares SQL text and parameters for the driver.
     /// </summary>
     public virtual void PrepareCommand(DbCommand Command, string SqlText, SqlParams Params)
@@ -178,24 +437,221 @@ public abstract class SqlProvider
     /// </summary>
     protected virtual IReadOnlyList<KeyValuePair<string, string>> TypeTokens => new KeyValuePair<string, string>[]
     {
-        new(SqlTypeTokens.CPRIMARY_KEY, "primary key"),
-        new(SqlTypeTokens.CAUTO_INC, "integer generated by default as identity"),
-        new(SqlTypeTokens.CNVARCHAR, "nvarchar"),
-        new(SqlTypeTokens.CVARCHAR, "varchar"),
-        new(SqlTypeTokens.CINT64, "bigint"),
-        new(SqlTypeTokens.CFLOAT, "float"),
-        new(SqlTypeTokens.CDECIMAL, "decimal(18, 4)"),
-        new(SqlTypeTokens.CDATE_TIME, "timestamp"),
-        new(SqlTypeTokens.CDATE, "date"),
-        new(SqlTypeTokens.CBOOL, "integer"),
-        new(SqlTypeTokens.CNBLOB_TEXT, "text"),
-        new(SqlTypeTokens.CBLOB_TEXT, "text"),
-        new(SqlTypeTokens.CBLOB, "blob"),
-        new(SqlTypeTokens.CNOT_NULL, "not null"),
-        new(SqlTypeTokens.CNULL, "null")
+        new(SqlTypeTokens.CPRIMARY_KEY, PrimaryKeySql),
+        new(SqlTypeTokens.CAUTO_INC, AutoIncSql),
+        new(SqlTypeTokens.CNVARCHAR, NVarcharSql),
+        new(SqlTypeTokens.CVARCHAR, VarcharSql),
+        new(SqlTypeTokens.CINT64, Int64Sql),
+        new(SqlTypeTokens.CFLOAT, FloatSql),
+        new(SqlTypeTokens.CDECIMAL, DecimalSql),
+        new(SqlTypeTokens.CDATE_TIME, DateTimeSql),
+        new(SqlTypeTokens.CDATE, DateSql),
+        new(SqlTypeTokens.CBOOL, BoolSql),
+        new(SqlTypeTokens.CNBLOB_TEXT, NBlobTextSql),
+        new(SqlTypeTokens.CBLOB_TEXT, BlobTextSql),
+        new(SqlTypeTokens.CBLOB, BlobSql),
+        new(SqlTypeTokens.CNOT_NULL, NotNullSql),
+        new(SqlTypeTokens.CNULL, NullSql)
     };
 
+    // ● table schema changes
+    /// <summary>
+    /// Builds SQL to rename a column of an existing table.
+    /// </summary>
+    public virtual string RenameColumnSql(string TableName, string ColumnName, string NewColumnName)
+        => throw new NotSupportedException("This provider does not support renaming columns.");
+
+    /// <summary>
+    /// Builds SQL to add a column described by a schema field definition.
+    /// </summary>
+    public virtual string AddColumnSql(string TableName, DataFieldDef Field)
+        => throw new NotSupportedException("This provider does not support adding columns.");
+
+    /// <summary>
+    /// Builds SQL to add a column from an application-authored SQL definition.
+    /// </summary>
+    public virtual string AddColumnSql(string TableName, string ColumnDef)
+        => $"ALTER TABLE {QuoteName(TableName)} ADD {ColumnDef}";
+
+    /// <summary>
+    /// Builds SQL to remove a column from an existing table.
+    /// </summary>
+    public virtual string DropColumnSql(string TableName, string ColumnName)
+        => $"ALTER TABLE {QuoteName(TableName)} DROP {QuoteName(ColumnName)}";
+
+    /// <summary>
+    /// Builds an UPDATE that fills existing NULL values before adding a NOT NULL constraint.
+    /// DefaultExpression is application-authored SQL, including any required string literal quotes.
+    /// IsString is available to provider overrides that need to distinguish text columns.
+    /// </summary>
+    public virtual string SetDefaultBeforeNotNullUpdateSql(string TableName, string ColumnName, string DefaultExpression, bool IsString)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(DefaultExpression);
+        string Column = QuoteName(ColumnName);
+        return $"UPDATE {QuoteName(TableName)} SET {Column} = {DefaultExpression} WHERE {Column} IS NULL";
+    }
+
+    /// <summary>
+    /// Builds SQL to require a value in an existing column.
+    /// The column type is available for providers that require it in the ALTER statement.
+    /// </summary>
+    public virtual string SetNotNullSql(string TableName, string ColumnName, string DataType)
+        => throw new NotSupportedException("This provider does not support setting NOT NULL.");
+
+    /// <summary>
+    /// Builds SQL to remove an existing column's NOT NULL requirement.
+    /// The column type is available for providers that require it in the ALTER statement.
+    /// </summary>
+    public virtual string DropNotNullSql(string TableName, string ColumnName, string DataType)
+        => throw new NotSupportedException("This provider does not support dropping NOT NULL.");
+
+    /// <summary>
+    /// Builds SQL to change an existing column's declared length.
+    /// The supplied type, nullability and default let providers restate the column definition.
+    /// </summary>
+    public virtual string SetColumnLengthSql(string TableName, string ColumnName, string DataType, string Required, string DefaultExpression)
+        => throw new NotSupportedException("This provider does not support changing a column's length directly.");
+
+    /// <summary>
+    /// Builds SQL to set the default expression for future inserts into an existing column.
+    /// </summary>
+    public virtual string SetColumnDefaultSql(string TableName, string ColumnName, string DefaultExpression)
+        => throw new NotSupportedException("This provider does not support setting a column default directly.");
+
+    /// <summary>
+    /// Builds SQL to remove an existing column's default expression.
+    /// </summary>
+    public virtual string DropColumnDefaultSql(string TableName, string ColumnName)
+        => throw new NotSupportedException("This provider does not support dropping a column default directly.");
+
+    /// <summary>
+    /// Builds SQL to add a named unique constraint to an existing table.
+    /// For example, ALTER TABLE Customer ADD CONSTRAINT UQ_Customer_Code UNIQUE (Code).
+    /// </summary>
+    public virtual string AddUniqueConstraintSql(string TableName, string ColumnName, string ConstraintName)
+        => $"ALTER TABLE {QuoteName(TableName)} ADD CONSTRAINT {QuoteName(ConstraintName)} UNIQUE ({QuoteName(ColumnName)})";
+
+    /// <summary>
+    /// Builds SQL to drop a named unique constraint from an existing table.
+    /// </summary>
+    public virtual string DropUniqueConstraintSql(string TableName, string ConstraintName)
+        => $"ALTER TABLE {QuoteName(TableName)} DROP CONSTRAINT {QuoteName(ConstraintName)}";
+
+    /// <summary>
+    /// Builds SQL to add a named foreign key constraint to an existing table.
+    /// For example, ALTER TABLE City ADD CONSTRAINT FK_City_Country
+    /// FOREIGN KEY (CountryId) REFERENCES Country (Id).
+    /// </summary>
+    public virtual string AddForeignKeySql(string TableName, string ColumnName, string ForeignTableName, string ForeignColumnName, string ConstraintName)
+        => $"ALTER TABLE {QuoteName(TableName)} ADD CONSTRAINT {QuoteName(ConstraintName)} FOREIGN KEY ({QuoteName(ColumnName)}) REFERENCES {QuoteName(ForeignTableName)} ({QuoteName(ForeignColumnName)})";
+
+    /// <summary>
+    /// Builds SQL to drop a named foreign key constraint from an existing table.
+    /// </summary>
+    public virtual string DropForeignKeySql(string TableName, string ConstraintName)
+        => $"ALTER TABLE {QuoteName(TableName)} DROP CONSTRAINT {QuoteName(ConstraintName)}";
+
+    /// <summary>
+    /// Builds SQL to create a named index over one or more columns.
+    /// </summary>
+    public virtual string CreateIndexSql(string TableName, string IndexName, IReadOnlyList<string> ColumnNames, bool Unique = false)
+        => throw new NotSupportedException("This provider does not support creating indexes.");
+
+    /// <summary>
+    /// Builds SQL to drop a named index on the specified table.
+    /// </summary>
+    public virtual string DropIndexSql(string TableName, string IndexName)
+        => throw new NotSupportedException("This provider does not support dropping indexes.");
+
+    // ● SQL type mappings
+    /// <summary>
+    /// Gets the provider's SQL for the primary key declaration.
+    /// </summary>
+    public virtual string PrimaryKeySql => "primary key";
+
+    /// <summary>
+    /// Gets the provider's SQL for the auto-increment field declaration.
+    /// </summary>
+    public virtual string AutoIncSql => "integer generated by default as identity";
+
+    /// <summary>
+    /// Gets the provider's SQL for the Unicode variable-length string type.
+    /// </summary>
+    public virtual string NVarcharSql => "nvarchar";
+
+    /// <summary>
+    /// Gets the provider's SQL for the variable-length string type.
+    /// </summary>
+    public virtual string VarcharSql => "varchar";
+
+    /// <summary>
+    /// Gets the provider's SQL for the signed 64-bit integer type.
+    /// </summary>
+    public virtual string Int64Sql => "bigint";
+
+    /// <summary>
+    /// Gets the provider's SQL for the floating-point type.
+    /// </summary>
+    public virtual string FloatSql => "float";
+
+    /// <summary>
+    /// Gets the provider's SQL for the default decimal type.
+    /// </summary>
+    public virtual string DecimalSql => "decimal(18, 4)";
+
+    /// <summary>
+    /// Gets the provider's SQL for the date and time type.
+    /// </summary>
+    public virtual string DateTimeSql => "timestamp";
+
+    /// <summary>
+    /// Gets the provider's SQL for the date-only type.
+    /// </summary>
+    public virtual string DateSql => "date";
+
+    /// <summary>
+    /// Gets the provider's SQL for the integer-backed Boolean type.
+    /// </summary>
+    public virtual string BoolSql => "integer";
+
+    /// <summary>
+    /// Gets the provider's SQL for the Unicode large text type.
+    /// </summary>
+    public virtual string NBlobTextSql => "text";
+
+    /// <summary>
+    /// Gets the provider's SQL for the large text type.
+    /// </summary>
+    public virtual string BlobTextSql => "text";
+
+    /// <summary>
+    /// Gets the provider's SQL for the binary large object type.
+    /// </summary>
+    public virtual string BlobSql => "blob";
+
+    /// <summary>
+    /// Gets the provider's SQL for the non-null column clause.
+    /// </summary>
+    public virtual string NotNullSql => "not null";
+
+    /// <summary>
+    /// Gets the provider's SQL for the nullable column clause.
+    /// </summary>
+    public virtual string NullSql => "null";
+
     // ● capabilities
+    /// <summary>
+    /// Gets the direct table alterations implemented by this provider.
+    /// Providers explicitly advertise the operations that callers can offer.
+    /// </summary>
+    public virtual AlterTableType SupportedAlterTableTypes => AlterTableType.None;
+
+    /// <summary>
+    /// Returns whether the provider supports every requested table alteration.
+    /// </summary>
+    public virtual bool SupportsAlterTableType(AlterTableType AlterType)
+        => (SupportedAlterTableTypes & AlterType) == AlterType;
+
     /// <summary>
     /// Gets whether the provider supports creating databases.
     /// </summary>
@@ -214,6 +670,31 @@ public abstract class SqlProvider
     public virtual OidMode OidMode => OidMode.None;
 
     // ● properties
+    /// <summary>
+    /// Gets the database server type implemented by this provider.
+    /// </summary>
+    public abstract DbServerType ServerType { get; }
+
+    /// <summary>
+    /// Gets the driver's ADO.NET factory through the common provider API.
+    /// </summary>
+    public abstract DbProviderFactory Factory { get; }
+
+    /// <summary>
+    /// Gets the provider name derived from its database server type.
+    /// </summary>
+    public virtual string Name => ServerType.ToString();
+
+    /// <summary>
+    /// Gets a display description for this database provider.
+    /// </summary>
+    public virtual string Description => Name;
+
+    /// <summary>
+    /// Gets the adapter used to parse and build connection strings for this provider.
+    /// </summary>
+    public virtual DbConAdapter ConnectionStringAdapter => DbConAdapters.Get(ServerType);
+
     /// <summary>
     /// Gets the native prefix used by the driver for named parameters.
     /// </summary>

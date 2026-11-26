@@ -165,19 +165,30 @@ public class SqlStore
     /// Creates and begins a context that owns a connection and transaction.
     /// </summary>
     public SqlTransactionContext BeginTransactionContext()
+        => fProvider.BeginTransactionContext(fConnectionInfo);
+
+    /// <summary>
+    /// Reads the current time from the database and returns it in UTC.
+    /// Providers that return a timestamp without an offset must supply a UTC value.
+    /// </summary>
+    public DateTime GetServerDateTime()
     {
-        SqlTransactionContext Context = new(fProvider.CreateConnection(fConnectionInfo.ConnectionString));
-        try
+        using DataTable Result = Select($"SELECT {fProvider.ServerDateTimeSql}");
+        if (Result.Rows.Count == 0 || Result.Rows[0].IsNull(0))
+            throw new InvalidOperationException("The database did not return a server timestamp.");
+
+        object Value = Result.Rows[0][0];
+        return Value switch
         {
-            Context.BeginTransaction();
-            return Context;
-        }
-        catch
-        {
-            Context.Dispose();
-            throw;
-        }
+            DateTimeOffset Timestamp => Timestamp.UtcDateTime,
+            DateTime Timestamp when Timestamp.Kind == DateTimeKind.Local => Timestamp.ToUniversalTime(),
+            DateTime Timestamp => DateTime.SpecifyKind(Timestamp, DateTimeKind.Utc),
+            string Timestamp => DateTime.Parse(Timestamp, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal),
+            _ => throw new InvalidOperationException("The database returned an unsupported timestamp type."),
+        };
     }
+
     /// <summary>
     /// Reads the result column metadata of a SELECT without loading its rows.
     /// </summary>
@@ -185,11 +196,8 @@ public class SqlStore
     {
         ArgumentNullException.ThrowIfNull(Params);
         using (SqlTransactionContext Context = BeginTransactionContext())
-        using (DbCommand Command = Context.Transaction.Connection.CreateCommand())
+        using (DbCommand Command = fProvider.CreateCommand(Context.Transaction, SqlText, Params, fConnectionInfo.CommandTimeoutSeconds))
         {
-            Command.Transaction = Context.Transaction;
-            Command.CommandTimeout = fConnectionInfo.CommandTimeoutSeconds;
-            fProvider.PrepareCommand(Command, SqlText, Params);
             LogSql(Command);
             ReadOnlyCollection<DbColumn> Result;
             using (DbDataReader Reader = Command.ExecuteReader(CommandBehavior.SchemaOnly))
@@ -229,13 +237,8 @@ public class SqlStore
         ArgumentNullException.ThrowIfNull(Params);
         try
         {
-            DbConnection Connection = Transaction.Connection
-                ?? throw new InvalidOperationException("The transaction has no active connection.");
-            using (DbCommand Command = Connection.CreateCommand())
+            using (DbCommand Command = fProvider.CreateCommand(Transaction, SqlText, Params, CommandTimeout))
             {
-                Command.Transaction = Transaction;
-                Command.CommandTimeout = CommandTimeout;
-                fProvider.PrepareCommand(Command, SqlText, Params);
                 LogSql(Command);
                 using (DbDataReader Reader = Command.ExecuteReader())
                 {
@@ -416,13 +419,8 @@ public class SqlStore
         ArgumentNullException.ThrowIfNull(Params);
         try
         {
-            DbConnection Connection = Transaction.Connection
-                ?? throw new InvalidOperationException("The transaction has no active connection.");
-            using (DbCommand Command = Connection.CreateCommand())
+            using (DbCommand Command = fProvider.CreateCommand(Transaction, SqlText, Params, CommandTimeout))
             {
-                Command.Transaction = Transaction;
-                Command.CommandTimeout = CommandTimeout;
-                fProvider.PrepareCommand(Command, SqlText, Params);
                 LogSql(Command);
                 return Command.ExecuteNonQuery();
             }
