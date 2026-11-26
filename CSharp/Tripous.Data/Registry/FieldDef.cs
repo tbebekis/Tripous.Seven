@@ -18,8 +18,29 @@ public class FieldDef : BaseDef
     int fMaxLength;
     FieldFlags fFlags;
     string fDefaultValue;
+    string fExpression;
+    string fSnapshotOf;
+
+    string fGroup;
+    bool fIsNullable = true;
+    string fDisplayFormat;
+    string fEditFormat;
+    int fDisplayWidth;
+    string fLookupSource;
+    string fLocator;
+    int fDecimals = -1;
+    string fToolTip;
 
     // ● internal
+    internal (string Alias, string Column) GetSnapshotSource()
+    {
+        string[] Parts = SnapshotOf.Split('.', StringSplitOptions.TrimEntries);
+        if (Parts.Length != 2 || Parts.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException($"Snapshot source for field '{Name}' must use the form Alias.Column.");
+        DataTableDef.ValidateIdentifier(Parts[0]);
+        DataTableDef.ValidateIdentifier(Parts[1]);
+        return (Parts[0], Parts[1]);
+    }
     internal object ParseDefaultValue()
     {
         string Value = DefaultValue;
@@ -80,11 +101,233 @@ public class FieldDef : BaseDef
             if (Name.Any(Ch => !(char.IsLetterOrDigit(Ch) || Ch == '_')))
                 throw new InvalidOperationException($"Field '{Name}' cannot be used as a SQL parameter name.");
         }
+        if (DefaultValue != null && !string.IsNullOrWhiteSpace(Expression))
+            throw new InvalidOperationException($"Computed field '{Name}' cannot have a default value.");
         if (DefaultValue != null)
             ParseDefaultValue();
+        if (!string.IsNullOrWhiteSpace(SnapshotOf))
+        {
+            if (!IsNativeField || IsNoInsertOrUpdate)
+                throw new InvalidOperationException($"Snapshot field '{Name}' must be a writable database field.");
+            GetSnapshotSource();
+        }
     }
 
     // ● properties
+    /// <summary>
+    /// Gets or sets the display group, such as General or Address.
+    /// </summary>
+    public string Group
+    {
+        get => string.IsNullOrWhiteSpace(fGroup) ? "General" : fGroup;
+        set
+        {
+            if (fGroup == value)
+                return;
+            fGroup = value;
+            NotifyPropertyChanged(nameof(Group));
+        }
+    }
+    /// <summary>
+    /// Gets or sets whether the source field permits null values.
+    /// </summary>
+    public bool IsNullable
+    {
+        get => fIsNullable;
+        set
+        {
+            if (fIsNullable == value)
+                return;
+            fIsNullable = value;
+            NotifyPropertyChanged(nameof(IsNullable));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the format used to display the value.
+    /// </summary>
+    public string DisplayFormat
+    {
+        get => fDisplayFormat;
+        set
+        {
+            if (fDisplayFormat == value)
+                return;
+            fDisplayFormat = value;
+            NotifyPropertyChanged(nameof(DisplayFormat));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the format used when editing the value.
+    /// </summary>
+    public string EditFormat
+    {
+        get => fEditFormat;
+        set
+        {
+            if (fEditFormat == value)
+                return;
+            fEditFormat = value;
+            NotifyPropertyChanged(nameof(EditFormat));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the suggested display width. Zero leaves the width unspecified.
+    /// </summary>
+    public int DisplayWidth
+    {
+        get => Math.Max(0, fDisplayWidth);
+        set
+        {
+            if (fDisplayWidth == value)
+                return;
+            fDisplayWidth = value;
+            NotifyPropertyChanged(nameof(DisplayWidth));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the name of the registered lookup source.
+    /// </summary>
+    public string LookupSource
+    {
+        get => fLookupSource;
+        set
+        {
+            if (fLookupSource == value)
+                return;
+            fLookupSource = value;
+            NotifyPropertyChanged(nameof(LookupSource));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the name of the registered locator.
+    /// </summary>
+    public string Locator
+    {
+        get => fLocator;
+        set
+        {
+            if (fLocator == value)
+                return;
+            fLocator = value;
+            NotifyPropertyChanged(nameof(Locator));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the displayed decimal places. Minus one leaves the precision unspecified.
+    /// </summary>
+    public int Decimals
+    {
+        get => fDecimals;
+        set
+        {
+            if (fDecimals == value)
+                return;
+            fDecimals = value;
+            NotifyPropertyChanged(nameof(Decimals));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the tooltip text, defaulting to the field name.
+    /// </summary>
+    public string ToolTip
+    {
+        get => string.IsNullOrWhiteSpace(fToolTip) ? Name : fToolTip;
+        set
+        {
+            if (fToolTip == value)
+                return;
+            fToolTip = value;
+            NotifyPropertyChanged(nameof(ToolTip));
+        }
+    }
+    /// <summary>
+    /// Gets whether the field is required.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsRequired => (Flags & FieldFlags.Required) != 0;
+    /// <summary>
+    /// Gets whether the field is hidden.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsHidden => (Flags & FieldFlags.Hidden) != 0;
+    /// <summary>
+    /// Gets whether the field is visible.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsVisible => !IsHidden;
+    /// <summary>
+    /// Gets whether the field is read-only.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsReadOnly => (Flags & FieldFlags.ReadOnly) != 0;
+    /// <summary>
+    /// Gets whether the field is read-only in the UI.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsReadOnlyUI => (Flags & FieldFlags.ReadOnlyUI) != 0;
+    /// <summary>
+    /// Gets whether the field is read-only when editing an existing row.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsReadOnlyEdit => (Flags & FieldFlags.ReadOnlyEdit) != 0;
+    /// <summary>
+    /// Gets whether the field is displayed as a memo.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsMemo => (Flags & FieldFlags.Memo) != 0;
+    /// <summary>
+    /// Gets whether the field is displayed as a large memo.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsLargeMemo => (Flags & FieldFlags.LargeMemo) != 0;
+    /// <summary>
+    /// Gets whether the field contains an image.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsImage => (Flags & FieldFlags.Image) != 0;
+    /// <summary>
+    /// Gets whether the field contains an image path.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsImagePath => (Flags & FieldFlags.ImagePath) != 0;
+    /// <summary>
+    /// Gets whether the field is available for searching.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsSearchable => (Flags & FieldFlags.Searchable) != 0;
+    /// <summary>
+    /// Gets whether the field is an extra column in the memory table.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsExtraField => (Flags & FieldFlags.Extra) != 0;
+    /// <summary>
+    /// Gets whether the field is a foreign key.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsForeignKeyField => (Flags & FieldFlags.ForeignKey) != 0;
+    /// <summary>
+    /// Gets whether the field references a lookup source.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsLookup => !string.IsNullOrWhiteSpace(LookupSource);
+    /// <summary>
+    /// Gets whether the field references a locator.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsLocator => !string.IsNullOrWhiteSpace(Locator);
+    /// <summary>
+    /// Gets whether the field represents a Boolean, including integer fields
+    /// explicitly marked with the Boolean flag.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsBoolean => DataType == DataFieldType.Boolean || (Flags & FieldFlags.Boolean) != 0;
+
+    /// <summary>
+    /// Gets or sets the output column name for a joined field.
+    /// When empty, the projection uses the join alias and field name separated by two underscores.
+    /// </summary>
+    public string Alias { get; set; }
+
     /// <summary>
     /// Gets or sets the table definition that owns this field.
     /// </summary>
@@ -134,6 +377,40 @@ public class FieldDef : BaseDef
         }
     }
     /// <summary>
+    /// Gets or sets the in-memory DataColumn expression for this field.
+    /// Computed fields are excluded from generated item SQL.
+    /// </summary>
+    public string Expression
+    {
+        get => fExpression;
+        set
+        {
+            if (fExpression == value)
+                return;
+            fExpression = value;
+            NotifyPropertyChanged(nameof(Expression));
+            NotifyPropertyChanged(nameof(IsNativeField));
+            NotifyPropertyChanged(nameof(IsNoInsertOrUpdate));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the lookup source in the form <c>Alias.Column</c>, such as <c>Product.Name</c>.
+    /// The selected value is copied into this database field and saved with the item.
+    /// This preserves the value as it was when selected, so renaming a product later
+    /// does not change the description stored on an existing document.
+    /// </summary>
+    public string SnapshotOf
+    {
+        get => fSnapshotOf;
+        set
+        {
+            if (fSnapshotOf == value)
+                return;
+            fSnapshotOf = value;
+            NotifyPropertyChanged(nameof(SnapshotOf));
+        }
+    }
+    /// <summary>
     /// Gets or sets the field behavior flags.
     /// </summary>
     public FieldFlags Flags
@@ -153,10 +430,10 @@ public class FieldDef : BaseDef
     /// Gets whether this field belongs to the database table.
     /// </summary>
     [JsonIgnore]
-    public bool IsNativeField => (Flags & FieldFlags.Extra) == 0;
+    public bool IsNativeField => (Flags & FieldFlags.Extra) == 0 && string.IsNullOrWhiteSpace(Expression);
     /// <summary>
     /// Gets whether the field is excluded from generated INSERT and UPDATE SQL.
     /// </summary>
     [JsonIgnore]
-    public bool IsNoInsertOrUpdate => (Flags & FieldFlags.NoInsertUpdate) != 0;
+    public bool IsNoInsertOrUpdate => (Flags & FieldFlags.NoInsertUpdate) != 0 || !string.IsNullOrWhiteSpace(Expression);
 }

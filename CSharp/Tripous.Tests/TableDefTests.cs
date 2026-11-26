@@ -13,6 +13,69 @@ namespace Tripous.Tests;
 /// </summary>
 public class TableDefTests
 {
+    /// <summary>
+    /// Snapshot fields keep the selected value and participate in generated item writes.
+    /// </summary>
+    [Fact]
+    public void LookupSnapshotKeepsCopiedValueUntilExplicitlyCleared()
+    {
+        TableDef Definition = new() { Name = "OrderLine" };
+        Definition.Fields.Add(new FieldDef { Name = "Id" });
+        Definition.Fields.Add(new FieldDef { Name = "ProductName", SnapshotOf = "Product.Name" });
+        using (MemTable Item = Definition.CreateDescriptorTable())
+        using (DataTable Products = new())
+        {
+            Products.Columns.Add("Name", typeof(string));
+            DataRow Product = Products.Rows.Add("Original name");
+            DataRow Row = Item.NewRow();
+            Definition.AssignLookupSnapshots(Row, "product", Product);
+            Product["Name"] = "New name";
+            Assert.Equal("Original name", Row["ProductName"]);
+            TableSqls Sql = Definition.BuildSql(OidMode.None);
+            Assert.Contains("ProductName", Sql.InsertRowSql);
+            Assert.Contains("ProductName", Sql.UpdateRowSql);
+            Definition.AssignLookupSnapshots(Row, "Product", null);
+            Assert.True(Row.IsNull("ProductName"));
+        }
+    }
+
+    /// <summary>
+    /// Nested lookup joins project live values while snapshots use the stored column.
+    /// </summary>
+    [Fact]
+    public void NestedLookupJoinsProjectIntoTheOwningTable()
+    {
+        TableDef Definition = new() { Name = "OrderLine" };
+        Definition.Fields.Add(new FieldDef { Name = "Id" });
+        Definition.Fields.Add(new FieldDef { Name = "ProductId" });
+        Definition.Fields.Add(new FieldDef { Name = "ProductName", SnapshotOf = "Product.Name" });
+        TableDef Product = Definition.AddJoin("ProductId", "Products", "Product");
+        Product.Fields.Add(new FieldDef { Name = "Name" });
+        Product.Fields.Add(new FieldDef { Name = "CategoryId" });
+        Product.Fields.Add(new FieldDef { Name = "Active", DataType = DataFieldType.Integer, Flags = FieldFlags.Boolean, DefaultValue = "1" });
+        Product.AddJoin("CategoryId", "Categories", "Category").Fields.Add(new FieldDef { Name = "Title", Alias = "CategoryTitle" });
+        Definition.AddJoin("ProductId", "Products", "OtherProduct").Fields.Add(new FieldDef { Name = "Name" });
+
+        Definition = Json.Deserialize<TableDef>(Json.Serialize(Definition));
+        TableSqls Sql = Definition.BuildSql(OidMode.None);
+        using MemTable Item = Definition.CreateDescriptorTable();
+        Assert.Contains("left join Products Product on Product.Id = OrderLine.ProductId left join Categories Category on Category.Id = Product.CategoryId", Sql.SelectSql);
+        Assert.Contains("Category.Title as CategoryTitle", Sql.SelectSql);
+        Assert.EndsWith($"where OrderLine.Id = {SqlProvider.GlobalPrefix}Id", Sql.SelectRowSql);
+        Assert.Contains("OtherProduct.Name as OtherProduct__Name", Sql.SelectSql);
+        Assert.DoesNotContain("Product__Name", Item.Columns.Cast<DataColumn>().Select(Column => Column.ColumnName));
+        Assert.True(Item.Columns.Contains("CategoryTitle"));
+        Assert.Same(Definition.Joins.Get("Products").Fields.Get("Active"), Definition.FindColumnField("product__active"));
+        Assert.Null(Definition.FindColumnField("Product__Name"));
+        JsonDataColumn Active = Assert.Single(new JsonDataTable(Item, Definition).Columns, Column => Column.Name == "Product__Active");
+        Assert.Equal((int)DataFieldType.Boolean, Active.DataType);
+        Assert.Null(Active.DefaultValue);
+        Assert.True(Item.Columns.Contains("OtherProduct__Name"));
+        Assert.Contains("ProductName", Sql.UpdateRowSql);
+        Assert.DoesNotContain("CategoryTitle", Sql.UpdateRowSql);
+        Assert.DoesNotContain("CategoryTitle", Sql.InsertRowSql);
+    }
+
     // ● private
     static TableDef CreateTree()
     {

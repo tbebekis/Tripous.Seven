@@ -63,7 +63,8 @@ public class TableSet
     {
         SqlParams Result = new();
         foreach (DataColumn Column in Row.Table.Columns)
-            Result.Add(Column.ColumnName, Row[Column, Version]);
+            if (string.IsNullOrEmpty(Column.Expression))
+                Result.Add(Column.ColumnName, Row[Column, Version]);
         return Result;
     }
     /// <summary>

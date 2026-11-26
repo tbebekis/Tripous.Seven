@@ -314,10 +314,12 @@ public class TableSetTests
             Item.Columns.Add("Id", typeof(string));
             Item.Columns.Add("Name", typeof(string));
             Item.Sqls.SelectRowSql = "SELECT Id, Name FROM OrderHeader WHERE Id = :Id";
-            MemTable Lines = new("OrderLine") { DetailFields = new[] { "OrderId" } };
-            Lines.Columns.Add("Id", typeof(string));
-            Lines.Columns.Add("OrderId", typeof(string));
-            Lines.Sqls.SelectSql = "SELECT Id, OrderId FROM OrderLine ORDER BY Id";
+            TableDef LineDef = new() { Name = "OrderLine", DetailField = "OrderId" };
+            LineDef.Fields.Add(new FieldDef { Name = "Id" });
+            LineDef.Fields.Add(new FieldDef { Name = "OrderId" });
+            LineDef.AddJoin("OrderId", "OrderHeader", "Header").Fields.Add(new FieldDef { Name = "Name" });
+            MemTable Lines = LineDef.CreateDescriptorTable();
+            Lines.Sqls.AssignFrom(LineDef.BuildSql(OidMode.None));
             MemTable Parts = new("OrderPart") { DetailFields = new[] { "LineId" } };
             Parts.Columns.Add("Id", typeof(string));
             Parts.Columns.Add("LineId", typeof(string));
@@ -332,7 +334,11 @@ public class TableSetTests
             Assert.Single(Item.Rows.Cast<DataRow>());
             Assert.Equal(205, Lines.Rows.Count);
             Assert.Equal(205, Parts.Rows.Count);
-            Assert.All(Lines.Rows.Cast<DataRow>(), Row => Assert.Equal("O1", Row["OrderId"]));
+            Assert.All(Lines.Rows.Cast<DataRow>(), Row =>
+            {
+                Assert.Equal("O1", Row["OrderId"]);
+                Assert.Equal("First", Row["Header__Name"]);
+            });
             Assert.Equal("O1", Item.CurrentRow["Id"]);
             Assert.NotNull(Lines.CurrentRow);
             Assert.Equal(Lines.CurrentRow["Id"], Assert.Single(Parts.DataView.Cast<DataRowView>())["LineId"]);

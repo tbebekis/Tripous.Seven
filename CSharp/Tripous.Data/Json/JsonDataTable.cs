@@ -62,7 +62,11 @@ public class JsonDataTable
             throw new InvalidOperationException($"A row in table '{Table.TableName}' must have exactly {Table.Columns.Count} values.");
         object[] Values = new object[Table.Columns.Count];
         for (int Index = 0; Index < Values.Length; Index++)
-            Values[Index] = ConvertValue(Row.Data[Index], Table.Columns[Index].DataType);
+        {
+            DataColumn Column = Table.Columns[Index];
+            if (string.IsNullOrEmpty(Column.Expression))
+                Values[Index] = ConvertValue(Row.Data[Index], Column.DataType);
+        }
         return Values;
     }
     static DataRow AddRow(DataTable Table, object[] Values, DataRowState State)
@@ -110,7 +114,11 @@ public class JsonDataTable
             Details.AddRange(Definition.Details.Select(Detail => Detail.Name));
         }
         foreach (DataColumn Column in Source.Columns)
-            Columns.Add(new JsonDataColumn(Column, Definition?.Fields.Find(Column.ColumnName)));
+        {
+            FieldDef Field = Definition?.FindColumnField(Column.ColumnName);
+            Columns.Add(new JsonDataColumn(Column, Field,
+                IncludeDefault: Field == null || ReferenceEquals(Definition.Fields.Find(Column.ColumnName), Field)));
+        }
         foreach (DataRow Row in Source.Rows)
         {
             if (Row.RowState == DataRowState.Deleted)

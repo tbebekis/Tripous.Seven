@@ -76,6 +76,18 @@ public class SelectDef : BaseDef
 
     // ● properties
     /// <summary>
+    /// Gets or sets the translation keys for column captions, keyed by SELECT output name.
+    /// </summary>
+    public Dictionary<string, string> DisplayLabels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Gets or sets explicit display types for the columns returned by the SELECT.
+    /// </summary>
+    public Dictionary<string, DataColumnType> ColumnTypes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Gets or sets whether the SELECT offers filters to the client.
+    /// </summary>
+    public bool UseFilters { get; set; } = true;
+    /// <summary>
     /// Gets or sets the filters defined for this SELECT.
     /// </summary>
     public SqlFilterDefs FilterDefs

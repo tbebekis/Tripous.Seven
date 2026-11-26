@@ -112,6 +112,7 @@ public class DataModuleCommitTests
         Definition.Table.Name = "Customer";
         Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
         Definition.Table.Fields.Add(new FieldDef { Name = "Name" });
+        Definition.Table.Fields.Add(new FieldDef { Name = "NameLength", DataType = DataFieldType.Integer, Expression = "LEN(Name)" });
         TableDef Address = new() { Name = "Address", MasterField = "Id", DetailField = "CustomerId" };
         Address.Fields.Add(new FieldDef { Name = "Id" });
         Address.Fields.Add(new FieldDef { Name = "CustomerId" });
@@ -149,7 +150,12 @@ public class DataModuleCommitTests
             SecondNote["Text"] = "Second note";
             RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.Commit" };
             Request.Params["ModuleName"] = ModuleName;
-            Request.Params["DataModule"] = new JsonDataModule(Input);
+            JsonDataModule InputPacket = new(Input);
+            JsonDataTable InputItem = InputPacket.Tables.Single(Table => Table.Name == "Customer");
+            int ExpressionIndex = InputItem.Columns.FindIndex(Column => Column.Name == "NameLength");
+            Assert.Equal(4, InputItem.Rows[0].Data[ExpressionIndex]);
+            InputItem.Rows[0].Data[ExpressionIndex] = "ignored client value";
+            Request.Params["DataModule"] = InputPacket;
             Request = Json.Deserialize<RemoteRequest>(Json.Serialize(Request));
             RemoteResponse InsertResult = RemoteOperations.Execute(Request);
             Assert.True(InsertResult.IsSuccess, InsertResult.ErrorText);
@@ -157,6 +163,9 @@ public class DataModuleCommitTests
             Assert.Equal(CustomerId, InsertResult["Id"]);
             JsonDataModule Inserted = Assert.IsType<JsonDataModule>(InsertResult["DataModule"]);
             Assert.Equal((int)DataMode.Edit, Inserted.State);
+            JsonDataTable InsertedItem = Inserted.Tables.Single(Table => Table.Name == "Customer");
+            Assert.Equal("LEN(Name)", InsertedItem.Columns[ExpressionIndex].Expression);
+            Assert.Equal(4, InsertedItem.Rows[0].Data[ExpressionIndex]);
             Assert.Equal(2L, Store.Select("SELECT COUNT(*) FROM AddressNote").Rows[0][0]);
 
             DataModule Edited = Definition.Create();

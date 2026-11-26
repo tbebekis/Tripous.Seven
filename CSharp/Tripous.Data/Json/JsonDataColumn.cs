@@ -36,15 +36,17 @@ public class JsonDataColumn
     /// <summary>
     /// Creates a column packet, preferring the logical type declared by the field definition.
     /// </summary>
-    public JsonDataColumn(DataColumn Column, FieldDef Field = null)
+    public JsonDataColumn(DataColumn Column, FieldDef Field = null, bool IncludeDefault = true)
     {
         ArgumentNullException.ThrowIfNull(Column);
         Name = Column.ColumnName;
         Title = Field != null ? Field.Title : Column.Caption;
-        DataType = (int)(Field != null ? Field.DataType : GetDataType(Column));
-        DefaultValue = Field != null ? Field.DefaultValue : Column.DefaultValue == DBNull.Value ? null : Column.DefaultValue;
+        DataType = (int)(Field?.IsBoolean == true ? DataFieldType.Boolean : Field?.DataType ?? GetDataType(Column));
+        if (IncludeDefault)
+            DefaultValue = Field != null ? Field.DefaultValue : Column.DefaultValue == DBNull.Value ? null : Column.DefaultValue;
         MaxLength = Column.DataType == typeof(string) ? Column.MaxLength : -1;
         Unique = Column.Unique;
+        Expression = string.IsNullOrEmpty(Column.Expression) ? null : Column.Expression;
     }
 
     // ● properties
@@ -72,4 +74,8 @@ public class JsonDataColumn
     /// Gets or sets whether the column values must be unique.
     /// </summary>
     public bool Unique { get; set; }
+    /// <summary>
+    /// Gets or sets the in-memory expression associated with this column.
+    /// </summary>
+    public string Expression { get; set; }
 }
