@@ -133,7 +133,7 @@ public class SqlStore
     {
         ArgumentNullException.ThrowIfNull(ConnectionInfo);
         fConnectionInfo = ConnectionInfo;
-        fProvider = SqlProviders.GetSqlProvider(fConnectionInfo.DbServerType);
+        fProvider = fConnectionInfo.GetSqlProvider();
     }
 
     // ● public

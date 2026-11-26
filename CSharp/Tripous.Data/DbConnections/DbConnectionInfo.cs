@@ -17,6 +17,17 @@ namespace Tripous.Data;
 /// </summary>
 public class DbConnectionInfo
 {
+    // ● public
+    /// <summary>
+    /// Returns the adapter for editing this connection's string.
+    /// </summary>
+    public DbConAdapter GetConnectionStringAdapter() => DbConAdapters.Get(DbServerType);
+
+    /// <summary>
+    /// Returns the SQL provider for this connection's server type.
+    /// </summary>
+    public SqlProvider GetSqlProvider() => SqlProviders.GetSqlProvider(DbServerType);
+
     // ● properties
     /// <summary>
     /// Gets or sets the connection name, which must be supplied after deserialization.
