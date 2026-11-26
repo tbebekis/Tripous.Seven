@@ -53,6 +53,27 @@ public class SqlStore
     /// Maps a native column declaration to the provider's default field type.
     /// </summary>
     internal DataFieldType GetMetadataFieldType(DbMetaColumn Column) => fProvider.GetMetadataFieldType(Column);
+    /// <summary>
+    /// Executes a scalar command using the caller's transaction and the store's command timeout.
+    /// </summary>
+    internal object ExecuteScalar(DbTransaction Transaction, string SqlText, SqlParams Params)
+    {
+        ArgumentNullException.ThrowIfNull(Transaction);
+        ArgumentNullException.ThrowIfNull(Params);
+        try
+        {
+            using (DbCommand Command = fProvider.CreateCommand(Transaction, SqlText, Params, fConnectionInfo.CommandTimeoutSeconds))
+            {
+                LogSql(Command);
+                return Command.ExecuteScalar();
+            }
+        }
+        catch (Exception Error)
+        {
+            Log(Error, SqlText, Params);
+            throw;
+        }
+    }
 
     // ● private logging
     /// <summary>
@@ -173,20 +194,23 @@ public class SqlStore
     /// </summary>
     public DateTime GetServerDateTime()
     {
-        using DataTable Result = Select($"SELECT {fProvider.ServerDateTimeSql}");
-        if (Result.Rows.Count == 0 || Result.Rows[0].IsNull(0))
-            throw new InvalidOperationException("The database did not return a server timestamp.");
-
-        object Value = Result.Rows[0][0];
-        return Value switch
+        using (DataTable Result = Select($"SELECT {fProvider.ServerDateTimeSql}"))
         {
-            DateTimeOffset Timestamp => Timestamp.UtcDateTime,
-            DateTime Timestamp when Timestamp.Kind == DateTimeKind.Local => Timestamp.ToUniversalTime(),
-            DateTime Timestamp => DateTime.SpecifyKind(Timestamp, DateTimeKind.Utc),
-            string Timestamp => DateTime.Parse(Timestamp, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal),
-            _ => throw new InvalidOperationException("The database returned an unsupported timestamp type."),
-        };
+            if (Result.Rows.Count == 0 || Result.Rows[0].IsNull(0))
+                throw new InvalidOperationException("The database did not return a server timestamp.");
+
+            object Value = Result.Rows[0][0];
+            return Value switch
+            {
+                DateTimeOffset Timestamp => Timestamp.UtcDateTime,
+                DateTime Timestamp when Timestamp.Kind == DateTimeKind.Local => Timestamp.ToUniversalTime(),
+                DateTime Timestamp => DateTime.SpecifyKind(Timestamp, DateTimeKind.Utc),
+                string Timestamp => DateTime.Parse(Timestamp, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal),
+                _ => throw new InvalidOperationException("The database returned an unsupported timestamp type."),
+            };
+        }
+
     }
 
     /// <summary>
@@ -482,6 +506,11 @@ public class SqlStore
     public int ExecSql(string SqlText, int CommandTimeout, DataRow Params) => ExecSql(SqlText, CommandTimeout, CreateParams(Params));
 
     // ● id generation
+    /// <summary>
+    /// Inserts one row and returns its database-generated integer key using the store's provider.
+    /// </summary>
+    public long InsertAndGetId(DbTransaction Transaction, string SqlText, SqlParams Params, string TableName, string KeyField)
+        => fProvider.InsertAndGetId(this, Transaction, SqlText, Params, TableName, KeyField);
     /// <summary>
     /// Returns the next ID from the generator associated with a table.
     /// </summary>

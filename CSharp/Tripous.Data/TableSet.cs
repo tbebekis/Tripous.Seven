@@ -120,10 +120,14 @@ public class TableSet
                 if (Mode == OidMode.Generator)
                     Row[Key] = Convert.ChangeType(fStore.NextId(Transaction, Table.TableName), Key.DataType, System.Globalization.CultureInfo.InvariantCulture);
             }
-            if (fStore.ExecSql(Transaction, Table.Sqls.InsertRowSql, CreateRowParams(Row, DataRowVersion.Current)) == 0)
-                throw new InvalidOperationException($"Insert did not affect a row in table '{Table.TableName}'.");
+            SqlParams Params = CreateRowParams(Row, DataRowVersion.Current);
             if (IntegerKey && Mode == OidMode.AutoInc)
-                Row[Key] = Convert.ChangeType(fStore.LastId(Transaction, Table.TableName), Key.DataType, System.Globalization.CultureInfo.InvariantCulture);
+            {
+                long Id = fStore.InsertAndGetId(Transaction, Table.Sqls.InsertRowSql, Params, Table.TableName, Key.ColumnName);
+                Row[Key] = Convert.ChangeType(Id, Key.DataType, System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else if (fStore.ExecSql(Transaction, Table.Sqls.InsertRowSql, Params) == 0)
+                throw new InvalidOperationException($"Insert did not affect a row in table '{Table.TableName}'.");
             if (IntegerKey && UpdateDetails && !Equals(PreviousId, Row[Key]))
                 UpdateDetailKeys(Table, PreviousId, Row[Key], PreviousIds);
         }

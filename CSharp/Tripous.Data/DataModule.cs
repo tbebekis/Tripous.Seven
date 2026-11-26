@@ -806,7 +806,7 @@ public class DataModule
         // Validate the original statement before it becomes a nested query.
         Store.ApplyRowLimit(Select.SqlText, DbConfig.DefaultRowLimit);
         string Where = SqlWhereFilterFormatter.FormatParameterized(ActiveFilters, Params, Select.SqlText);
-        string InnerSql = SqlTextScanner.PrepareSubquery(Select.SqlText);
+        string InnerSql = SqlTextScanner.PrepareForAppend(Select.SqlText);
         return $"select * from ({InnerSql}) X where {Where}";
     }
     

@@ -10,7 +10,14 @@ select
     coalesce(c.numeric_precision, 0)                     as DecimalPrecision, 
     coalesce(c.numeric_scale, 0)                         as DecimalScale, 
     coalesce(c.column_default, '')                       as DefaultValue, 
-    ''                                                   as Expression,
+    coalesce(c.generation_expression, '')                as Expression,
+    case when c.is_identity = 'YES' or (
+        c.column_default like 'nextval(%'
+        and pg_catalog.pg_get_serial_sequence(
+            pg_catalog.format('%I.%I', c.table_schema, c.table_name), c.column_name
+        ) is not null
+    ) then 1 else 0 end                                   as IsIdentity,
+    case when c.is_generated = 'ALWAYS' then 1 else 0 end as IsComputed,
     c.ordinal_position                                   as OrdinalPosition
 from 
     information_schema.columns c
@@ -23,4 +30,4 @@ where
 order by 
     t.table_schema, 
     t.table_name, 
-    c.ordinal_position  
+    c.ordinal_position

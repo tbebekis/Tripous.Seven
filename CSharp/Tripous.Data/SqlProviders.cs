@@ -16,6 +16,8 @@ static public class SqlProviders
     // ● private fields
     static readonly Lazy<SqlProviderSqlite> fSqlite = new(() => new SqlProviderSqlite());
 
+    static readonly Lazy<SqlProviderPostgreSql> fPostgreSql = new(() => new SqlProviderPostgreSql());
+
     // ● static public
     /// <summary>
     /// Returns the provider for a supported database server type.
@@ -25,6 +27,7 @@ static public class SqlProviders
         return ServerType switch
         {
             DbServerType.Sqlite => Sqlite,
+            DbServerType.PostgreSql => PostgreSql,
             _ => throw new NotSupportedException($"No SQL provider is available for {ServerType}.")
         };
     }
@@ -34,4 +37,9 @@ static public class SqlProviders
     /// Gets the shared SQLite provider.
     /// </summary>
     static public SqlProviderSqlite Sqlite => fSqlite.Value;
+
+    /// <summary>
+    /// Gets the shared PostgreSQL provider.
+    /// </summary>
+    static public SqlProviderPostgreSql PostgreSql => fPostgreSql.Value;
 }

@@ -57,8 +57,10 @@ public abstract class SqlProvider
     {
         try
         {
-            using DbConnection Connection = OpenConnection(GetConnectionStringForCheck(ConnectionString));
-            return true;
+            using (DbConnection Connection = OpenConnection(GetConnectionStringForCheck(ConnectionString)))
+            {
+                return true;
+            }
         }
         catch (Exception) when (!ThrowIfNot)
         {
@@ -76,6 +78,22 @@ public abstract class SqlProvider
         return CanConnect(ConnectionInfo.ConnectionString, ThrowIfNot);
     }
 
+    /// <summary>
+    /// Checks whether the database accepts connections, retrying up to the supplied attempt count.
+    /// </summary>
+    public virtual bool WaitUntilDatabaseReady(string ConnectionString, int RetryCount = 10, int DelayMilliseconds = 1000)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(RetryCount);
+        ArgumentOutOfRangeException.ThrowIfNegative(DelayMilliseconds);
+        for (int Attempt = 0; Attempt < RetryCount; Attempt++)
+        {
+            if (CanConnect(ConnectionString))
+                return true;
+            if (Attempt + 1 < RetryCount)
+                Thread.Sleep(DelayMilliseconds);
+        }
+        return false;
+    }
     /// <summary>
     /// Verifies the connection and propagates any error.
     /// </summary>
@@ -129,8 +147,10 @@ public abstract class SqlProvider
     /// </summary>
     public virtual string GetServerVersion(string ConnectionString)
     {
-        using DbConnection Connection = OpenConnection(GetConnectionStringForCheck(ConnectionString));
-        return Connection.ServerVersion;
+        using (DbConnection Connection = OpenConnection(GetConnectionStringForCheck(ConnectionString)))
+        {
+            return Connection.ServerVersion;
+        }
     }
 
     /// <summary>
@@ -258,6 +278,27 @@ public abstract class SqlProvider
     }
 
     /// <summary>
+    /// Checks whether the database contains a generator with the supplied name.
+    /// </summary>
+    public virtual bool GeneratorExists(string ConnectionString, string GeneratorName)
+        => throw new NotSupportedException("This provider does not support named generators.");
+    /// <summary>
+    /// Creates a named generator if it does not already exist.
+    /// </summary>
+    public virtual void CreateGenerator(string ConnectionString, string GeneratorName)
+        => throw new NotSupportedException("This provider does not support named generators.");
+    /// <summary>
+    /// Sets the stored counter for a named generator.
+    /// This operation can affect which IDs are generated later.
+    /// </summary>
+    public virtual void SetGeneratorTo(string ConnectionString, string GeneratorName, long Value)
+        => throw new NotSupportedException("This provider does not support named generators.");
+    /// <summary>
+    /// Sets a named generator using a 32-bit value.
+    /// </summary>
+    public virtual void SetGeneratorTo(string ConnectionString, string GeneratorName, int Value)
+        => SetGeneratorTo(ConnectionString, GeneratorName, (long)Value);
+    /// <summary>
     /// Returns SQL for obtaining the next value of a named generator.
     /// </summary>
     public virtual string NextIdByGeneratorSql(string GeneratorName)
@@ -277,6 +318,18 @@ public abstract class SqlProvider
     public virtual void SetTableGeneratorTo(string ConnectionString, string TableName, int Value)
         => SetTableGeneratorTo(ConnectionString, TableName, (long)Value);
 
+    /// <summary>
+    /// Inserts one row and returns its database-generated integer key in the supplied transaction.
+    /// The default implementation reads the last generated ID after a successful insert.
+    /// </summary>
+    public virtual long InsertAndGetId(SqlStore Store, DbTransaction Transaction, string SqlText, SqlParams Params, string TableName, string KeyField)
+    {
+        ArgumentNullException.ThrowIfNull(Store);
+        ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
+        if (Store.ExecSql(Transaction, SqlText, Params) == 0)
+            throw new InvalidOperationException($"Insert did not affect a row in table '{TableName}'.");
+        return Store.LastId(Transaction, TableName);
+    }
     /// <summary>
     /// Returns SQL for obtaining the last generated ID in the current connection.
     /// </summary>
@@ -299,7 +352,7 @@ public abstract class SqlProvider
         int Index = 0;
         while (Index < SqlText.Length)
         {
-            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index))
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, ServerType == DbServerType.PostgreSql))
                 continue;
             if (SqlText[Index] != '@' || (Index > 0 && (char.IsLetterOrDigit(SqlText[Index - 1]) || SqlText[Index - 1] == '_' || SqlText[Index - 1] == '$' || SqlText[Index - 1] == '@')))
             {
@@ -397,7 +450,7 @@ public abstract class SqlProvider
             Map.Add(Param.Name, Param);
 
         SqlText = ReplaceDataTypePlaceholders(SqlText);
-        var Refs = SqlParamScanner.Scan(SqlText, GlobalPrefix);
+        var Refs = SqlParamScanner.Scan(SqlText, GlobalPrefix, ServerType == DbServerType.PostgreSql);
         var Added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var Text = new StringBuilder();
         var Parameters = new List<DbParameter>();
@@ -690,6 +743,19 @@ public abstract class SqlProvider
     /// </summary>
     public virtual string Description => Name;
 
+    /// <summary>
+    /// Gets a format template showing the provider's connection string syntax.
+    /// Use CreateConnectionString to escape values supplied by callers.
+    /// </summary>
+    public virtual string ConnectionStringTemplate => "";
+    /// <summary>
+    /// Gets the customary administrative user name, when the provider has one.
+    /// </summary>
+    public virtual string SuperUser => "";
+    /// <summary>
+    /// Gets the documented default administrative password, when one is available.
+    /// </summary>
+    public virtual string SuperUserPassword => "";
     /// <summary>
     /// Gets the adapter used to parse and build connection strings for this provider.
     /// </summary>

@@ -62,6 +62,35 @@ public class SqlProviderTests
         Assert.Throws<ArgumentOutOfRangeException>(() => Provider.ApplyRowLimit("select 1", 0));
     }
     /// <summary>
+    /// PostgreSQL command preparation recognizes casts, array parameters, and quoted SQL.
+    /// </summary>
+    [Fact]
+    public void PostgreSqlCommandPreservesDialectSyntax()
+    {
+        SqlProvider Provider = SqlProviders.GetSqlProvider(DbServerType.PostgreSql);
+        string ConnectionString = Provider.CreateConnectionString("db.test", "Catalog", "tester", "a;b=c");
+        using DbConnection Connection = Provider.CreateConnection(ConnectionString);
+        Assert.Equal("Catalog", Connection.Database);
+        Assert.Same(SqlProviders.PostgreSql, Provider);
+
+        const string Sql = """select array[:Value]::int[], $tag$:ignored @BLOB$tag$, E'it\'s :ignored', 1 /* /* nested */ :ignored */, cast(null as @BLOB)""";
+        using DbCommand Command = Provider.CreateCommand(Connection, Sql, new SqlParams().Add("Value", 7));
+        Assert.Equal(Sql.Replace(":Value", "@Value").Replace("as @BLOB", "as bytea"), Command.CommandText);
+        Assert.Equal(7, Assert.IsAssignableFrom<DbParameter>(Assert.Single(Command.Parameters)).Value);
+    }
+    /// <summary>
+    /// PostgreSQL row limits preserve quoted text and reject existing top-level row limits.
+    /// </summary>
+    [Fact]
+    public void PostgreSqlRowLimitRecognizesLimitAndFetch()
+    {
+        SqlProvider Provider = SqlProviders.PostgreSql;
+        const string Sql = "select $$FETCH LIMIT$$ from (select 1 limit 1) x";
+        Assert.Equal(Sql + " LIMIT 5; -- list", Provider.ApplyRowLimit(Sql + "; -- list", 5));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("select 1 LIMIT 2", 5));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("select 1 FETCH FIRST ROW ONLY", 5));
+    }
+    /// <summary>
     /// SQLite uses auto-increment while the base provider specifies no mode.
     /// </summary>
     [Fact]

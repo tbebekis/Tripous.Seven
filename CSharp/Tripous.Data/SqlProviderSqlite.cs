@@ -132,47 +132,7 @@ public class SqlProviderSqlite : SqlProvider
     /// List SELECTs must not contain their own top-level LIMIT clause.
     /// </summary>
     public override string ApplyRowLimit(string SqlText, int RowLimit)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(SqlText);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RowLimit);
-        int Index = 0;
-        int Depth = 0;
-        int LastCodeEnd = 0;
-        while (Index < SqlText.Length)
-        {
-            int Start = Index;
-            bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
-                || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
-            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index))
-            {
-                if (!Comment)
-                    LastCodeEnd = Index;
-                continue;
-            }
-            char Ch = SqlText[Index];
-            if (Ch == '(')
-                Depth++;
-            else if (Ch == ')')
-                Depth--;
-            if (char.IsLetter(Ch) || Ch == '_')
-            {
-                Index++;
-                while (Index < SqlText.Length && (char.IsLetterOrDigit(SqlText[Index]) || SqlText[Index] == '_' || SqlText[Index] == '$'))
-                    Index++;
-                bool Parameter = Start > 0 && (SqlText[Start - 1] == ':' || SqlText[Start - 1] == '@' || SqlText[Start - 1] == '$');
-                if (Depth == 0 && !Parameter && SqlText.AsSpan(Start, Index - Start).Equals("limit", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("List SELECTs must not specify a top-level LIMIT; Tripous applies the row limit.");
-                LastCodeEnd = Index;
-                continue;
-            }
-            Index++;
-            if (!char.IsWhiteSpace(Ch))
-                LastCodeEnd = Index;
-        }
-        if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
-            LastCodeEnd--;
-        return SqlText.Insert(LastCodeEnd, $" LIMIT {RowLimit}");
-    }
+        => SqlTextScanner.ApplyLimit(SqlText, RowLimit);
 
     /// <summary>
     /// Creates an empty SQLite database file without changing an existing file.
@@ -211,13 +171,15 @@ public class SqlProviderSqlite : SqlProvider
         ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
         ArgumentOutOfRangeException.ThrowIfNegative(Value);
         SqlStore Store = new(new DbConnectionInfo { ConnectionString = ConnectionString, DbServerType = ServerType });
-        using SqlTransactionContext Context = Store.BeginTransactionContext();
-        SqlParams Params = new SqlParams().Add("Value", Value).Add("TableName", TableName);
-        if (!Store.TableExists(Context.Transaction, "sqlite_sequence")
-            || Store.ExecSql(Context.Transaction, $"UPDATE main.sqlite_sequence SET seq = {GlobalPrefix}Value WHERE name = {GlobalPrefix}TableName COLLATE NOCASE", Params) != 1)
-            throw new InvalidOperationException($"Expected one AUTOINCREMENT counter for table '{TableName}'.");
+        using (SqlTransactionContext Context = Store.BeginTransactionContext())
+        {
+            SqlParams Params = new SqlParams().Add("Value", Value).Add("TableName", TableName);
+            if (!Store.TableExists(Context.Transaction, "sqlite_sequence")
+                || Store.ExecSql(Context.Transaction, $"UPDATE main.sqlite_sequence SET seq = {GlobalPrefix}Value WHERE name = {GlobalPrefix}TableName COLLATE NOCASE", Params) != 1)
+                throw new InvalidOperationException($"Expected one AUTOINCREMENT counter for table '{TableName}'.");
 
-        Context.Commit();
+            Context.Commit();
+        }
     }
 
     /// <summary>
@@ -340,11 +302,13 @@ public class SqlProviderSqlite : SqlProvider
     {
         get
         {
-            using SqliteConnection Connection = new();
-            AlterTableType Result = AlterTableType.ColumnAddOrDrop | AlterTableType.ColumnRename;
-            if (Version.TryParse(Connection.ServerVersion, out Version EngineVersion) && EngineVersion >= new Version(3, 53, 0))
-                Result |= AlterTableType.ColumnSetOrDropNotNull;
-            return Result;
+            using (SqliteConnection Connection = new())
+            {
+                AlterTableType Result = AlterTableType.ColumnAddOrDrop | AlterTableType.ColumnRename;
+                if (Version.TryParse(Connection.ServerVersion, out Version EngineVersion) && EngineVersion >= new Version(3, 53, 0))
+                    Result |= AlterTableType.ColumnSetOrDropNotNull;
+                return Result;
+            }
         }
     }
 
@@ -416,6 +380,18 @@ public class SqlProviderSqlite : SqlProvider
     /// </summary>
     public override DbProviderFactory Factory => SqliteFactory.Instance;
 
+    /// <summary>
+    /// Gets the SQLite template with the database file path as its sole argument.
+    /// </summary>
+    public override string ConnectionStringTemplate => "Data Source=\"{0}\"";
+    /// <summary>
+    /// SQLite has no administrative user name.
+    /// </summary>
+    public override string SuperUser => "";
+    /// <summary>
+    /// SQLite has no administrative password.
+    /// </summary>
+    public override string SuperUserPassword => "";
     /// <summary>
     /// Gets SQL that finds a table by name in the SQLite schema.
     /// </summary>

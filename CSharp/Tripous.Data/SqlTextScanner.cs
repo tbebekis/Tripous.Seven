@@ -15,10 +15,58 @@ static internal class SqlTextScanner
 {
     // ● internal
     /// <summary>
-    /// Removes a trailing statement terminator and protects the closing parenthesis
-    /// from a trailing line comment when embedding SQL in a subquery.
+    /// Adds a top-level LIMIT before a trailing terminator or comment.
     /// </summary>
-    static internal string PrepareSubquery(string SqlText)
+    static internal string ApplyLimit(string SqlText, int RowLimit, bool PostgreSql = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(SqlText);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RowLimit);
+        int Index = 0;
+        int Depth = 0;
+        int LastCodeEnd = 0;
+        while (Index < SqlText.Length)
+        {
+            int Start = Index;
+            bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
+                || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, PostgreSql))
+            {
+                if (!Comment)
+                    LastCodeEnd = Index;
+                continue;
+            }
+            char Ch = SqlText[Index];
+            if (Ch == '(' || (PostgreSql && Ch == '['))
+                Depth++;
+            else if (Ch == ')' || (PostgreSql && Ch == ']'))
+                Depth--;
+            if (char.IsLetter(Ch) || Ch == '_')
+            {
+                Index++;
+                while (Index < SqlText.Length && (char.IsLetterOrDigit(SqlText[Index]) || SqlText[Index] == '_' || SqlText[Index] == '$'))
+                    Index++;
+                bool Parameter = Start > 0 && (SqlText[Start - 1] == ':' || SqlText[Start - 1] == '@' || SqlText[Start - 1] == '$');
+                var Word = SqlText.AsSpan(Start, Index - Start);
+                if (Depth == 0 && !Parameter && (Word.Equals("limit", StringComparison.OrdinalIgnoreCase)
+                    || (PostgreSql && Word.Equals("fetch", StringComparison.OrdinalIgnoreCase))))
+                    throw new InvalidOperationException($"List SELECTs must not specify a top-level {Word}; Tripous applies the row limit.");
+                LastCodeEnd = Index;
+                continue;
+            }
+            Index++;
+            if (!char.IsWhiteSpace(Ch))
+                LastCodeEnd = Index;
+        }
+        if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
+            LastCodeEnd--;
+        return SqlText.Insert(LastCodeEnd, $" LIMIT {RowLimit}");
+    }
+
+    /// <summary>
+    /// Removes a trailing statement terminator and adds a newline so appended SQL
+    /// remains executable when the statement ends with a line comment.
+    /// </summary>
+    static internal string PrepareForAppend(string SqlText, bool PostgreSql = false)
     {
         ArgumentNullException.ThrowIfNull(SqlText);
         int Index = 0;
@@ -27,7 +75,7 @@ static internal class SqlTextScanner
         {
             bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
                 || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
-            if (SkipProtectedRegion(SqlText, ref Index))
+            if (SkipProtectedRegion(SqlText, ref Index, PostgreSql))
             {
                 if (!Comment)
                     LastCodeEnd = Index;
@@ -45,16 +93,38 @@ static internal class SqlTextScanner
     /// Advances past a quoted region or comment starting at the current index.
     /// Returns false without changing the index when no such region starts there.
     /// </summary>
-    static internal bool SkipProtectedRegion(string SqlText, ref int Index)
+    static internal bool SkipProtectedRegion(string SqlText, ref int Index, bool PostgreSql = false)
     {
         char Ch = SqlText[Index];
-        if (Ch == '\'' || Ch == '"' || Ch == '`' || Ch == '[')
+        if (PostgreSql && Ch == '$' && (Index == 0 || !IsPostgreSqlIdentifierPart(SqlText[Index - 1])))
         {
+            int End = Index + 1;
+            if (End < SqlText.Length && (char.IsLetter(SqlText[End]) || SqlText[End] == '_'))
+            {
+                End++;
+                while (End < SqlText.Length && SqlText[End] != '$' && IsPostgreSqlIdentifierPart(SqlText[End]))
+                    End++;
+            }
+            if (End < SqlText.Length && SqlText[End] == '$')
+            {
+                string Delimiter = SqlText.Substring(Index, End - Index + 1);
+                int Close = SqlText.IndexOf(Delimiter, End + 1, StringComparison.Ordinal);
+                Index = Close < 0 ? SqlText.Length : Close + Delimiter.Length;
+                return true;
+            }
+        }
+        if (Ch == '\'' || Ch == '"' || (!PostgreSql && (Ch == '`' || Ch == '[')))
+        {
+            bool EscapeString = PostgreSql && Ch == '\'' && Index > 0 && (SqlText[Index - 1] is 'E' or 'e')
+                && (Index == 1 || !IsPostgreSqlIdentifierPart(SqlText[Index - 2]));
             char End = Ch == '[' ? ']' : Ch;
             Index++;
             while (Index < SqlText.Length)
             {
-                if (SqlText[Index++] == End)
+                char Current = SqlText[Index++];
+                if (EscapeString && Current == '\\' && Index < SqlText.Length)
+                    Index++;
+                else if (Current == End)
                 {
                     if (Index < SqlText.Length && SqlText[Index] == End)
                         Index++;
@@ -74,11 +144,28 @@ static internal class SqlTextScanner
         if (Ch == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*')
         {
             Index += 2;
-            while (Index + 1 < SqlText.Length && !(SqlText[Index] == '*' && SqlText[Index + 1] == '/'))
-                Index++;
-            Index = Math.Min(Index + 2, SqlText.Length);
+            int Depth = 1;
+            while (Depth > 0 && Index + 1 < SqlText.Length)
+            {
+                if (SqlText[Index] == '*' && SqlText[Index + 1] == '/')
+                {
+                    Depth--;
+                    Index += 2;
+                }
+                else if (PostgreSql && SqlText[Index] == '/' && SqlText[Index + 1] == '*')
+                {
+                    Depth++;
+                    Index += 2;
+                }
+                else
+                    Index++;
+            }
+            if (Depth > 0)
+                Index = SqlText.Length;
             return true;
         }
         return false;
     }
+
+    static bool IsPostgreSqlIdentifierPart(char Ch) => char.IsLetterOrDigit(Ch) || Ch is '_' or '$';
 }
