@@ -19,6 +19,10 @@ static public class SysConfig
 
     // ● properties
     /// <summary>
+    /// Gets or sets whether detailed diagnostic information is enabled.
+    /// </summary>
+    static public bool DebugMode { get; set; }
+    /// <summary>
     /// Gets or sets the application name used by the default application folder.
     /// When unset, the entry assembly name is used.
     /// </summary>

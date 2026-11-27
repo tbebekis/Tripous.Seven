@@ -15,15 +15,6 @@ static public class DbConfig
 {
     // ● properties
     /// <summary>
-    /// Gets or sets whether SQL statements are sent to the information log.
-    /// Parameter values are included only when Sys.DebugMode is enabled.
-    /// </summary>
-    static public bool LogSqlStatements { get; set; }
-    /// <summary>
-    /// Gets or sets the global maximum number of rows in a data module list.
-    /// </summary>
-    static public int DefaultRowLimit { get; set; } = 400;
-    /// <summary>
     /// Gets or sets the default transaction isolation level for database connections.
     /// Unspecified uses the provider's default.
     /// </summary>

@@ -499,7 +499,7 @@ public class DataModule
         LastTableSetResult = null;
         if (string.IsNullOrWhiteSpace(SqlText))
             return 0;
-        int RowLimit = DbConfig.DefaultRowLimit;
+        int RowLimit = Db.Settings.DefaultRowLimit;
         if (RowLimit <= 0)
             throw new InvalidOperationException("The data module list row limit must be positive.");
         TableSetResult Result = TableSet.ListSelect(Store.ApplyRowLimit(SqlText, RowLimit), Params);
@@ -641,6 +641,31 @@ public class DataModule
         {
             fCommitting--;
         }
+    }
+    /// <summary>
+    /// Gets the data produced by visible FactBoxes for the current item.
+    /// </summary>
+    public virtual List<JsonItemFactBox> GetFactBoxes()
+    {
+        if (!IsInitialized)
+            throw new InvalidOperationException("The data module must be initialized before obtaining FactBoxes.");
+
+        List<JsonItemFactBox> Result = new();
+        DataRow Row = CurrentRow;
+        foreach (ItemFactBoxDef Definition in ModuleDef.FactBoxes)
+        {
+            if (!Definition.IsVisible)
+                continue;
+
+            ItemFactBoxContext Context = new() { FactBoxDef = Definition, Module = this, Row = Row };
+            Result.Add(new JsonItemFactBox
+            {
+                Name = Definition.Name,
+                Title = Definition.Title,
+                Data = Definition.CreateProvider().GetData(Context),
+            });
+        }
+        return Result;
     }
     /// <summary>
     /// Rejects changes in the item tree without selecting a different row.
@@ -825,7 +850,7 @@ public class DataModule
             return Select.SqlText;
 
         // Validate the original statement before it becomes a nested query.
-        Store.ApplyRowLimit(Select.SqlText, DbConfig.DefaultRowLimit);
+        Store.ApplyRowLimit(Select.SqlText, Db.Settings.DefaultRowLimit);
         string Where = SqlWhereFilterFormatter.FormatParameterized(ActiveFilters, Params, Select.SqlText);
         string InnerSql = SqlTextScanner.PrepareForAppend(Select.SqlText, Store.Provider.ServerType);
         return $"select * from ({InnerSql}) X where {Where}";
@@ -973,6 +998,19 @@ public class DataModule
         if (!Edit(RowId))
             throw new KeyNotFoundException($"Item '{Id}' was not found in data module '{Name}'.");
         return new JsonDataModule(this);
+    }
+
+    /// <summary>
+    /// Loads the requested item and returns its FactBoxes.
+    /// An empty ID uses the current module context without loading an item.
+    /// </summary>
+    public virtual List<JsonItemFactBox> JsonGetFactBoxes(string Id)
+    {
+        LastTableSetResult = null;
+        if (!string.IsNullOrWhiteSpace(Id) && !Edit(JsonConvertRowId(Id)))
+            throw new KeyNotFoundException($"Item '{Id}' was not found in data module '{Name}'.");
+
+        return GetFactBoxes();
     }
 
     /// <summary>

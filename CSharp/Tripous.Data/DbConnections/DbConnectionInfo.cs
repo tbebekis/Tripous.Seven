@@ -41,9 +41,10 @@ public class DbConnectionInfo
     /// </summary>
     public string ConnectionString { get; set; } = "";
     /// <summary>
-    /// Gets or sets the default command timeout in seconds.
+    /// Gets or sets this connection's command timeout in seconds.
+    /// New connections start with the default from Db.Settings.
     /// </summary>
-    public int CommandTimeoutSeconds { get; set; } = 30;
+    public int CommandTimeoutSeconds { get; set; } = Db.Settings.DefaultCommandTimeoutSeconds;
     /// <summary>
     /// Gets or sets the isolation level for transactions opened by a store on this connection.
     /// Unspecified inherits the application default from DbConfig.

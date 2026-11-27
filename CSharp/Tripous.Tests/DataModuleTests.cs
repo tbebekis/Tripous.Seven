@@ -967,7 +967,7 @@ public class DataModuleTests
             Db.Connections.Add(new DbConnectionInfo { Name = ConnectionName, ConnectionString = $"Data Source={FilePath};Pooling=False" });
             DataModule Module = Definition.Create();
             Module.Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT NOT NULL)");
-            int Limit = DbConfig.DefaultRowLimit;
+            int Limit = Db.Settings.DefaultRowLimit;
             Module.Store.ExecSql($"WITH RECURSIVE N(Value) AS (VALUES (1) UNION ALL SELECT Value + 1 FROM N WHERE Value < {Limit + 5}) INSERT INTO Customer SELECT CAST(Value AS TEXT), 'Name' FROM N");
             Assert.Equal(Limit, Module.ListSelect("select Id, Name from Customer order by CAST(Id AS INTEGER); -- list"));
             Assert.Equal(Limit, Module.ListTable.Rows.Count);

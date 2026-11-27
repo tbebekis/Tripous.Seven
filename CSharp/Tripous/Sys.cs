@@ -95,9 +95,21 @@ static public class Sys
 
     // ● properties
     /// <summary>
+    /// Gets or sets the file name used to persist global settings for this layer.
+    /// </summary>
+    static public string SysGlobalSettingsFileName { get; set; } = "SysGlobalSettings.json";
+    /// <summary>
+    /// Gets the shared observable settings for this layer.
+    /// </summary>
+    static public SysGlobalSettings Settings { get; } = new();
+    /// <summary>
     /// Gets or sets whether detailed diagnostic information is enabled.
     /// </summary>
-    static public bool DebugMode { get; set; }
+    static public bool DebugMode
+    {
+        get => SysConfig.DebugMode;
+        set => SysConfig.DebugMode = value;
+    }
     /// <summary>
     /// Gets or sets the callback for UI log text.
     /// </summary>

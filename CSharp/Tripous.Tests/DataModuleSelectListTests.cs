@@ -46,7 +46,7 @@ public class DataModuleSelectListTests
         string ConnectionName = $"Connection_{Guid.NewGuid():N}";
         string ModuleName = $"Module_{Guid.NewGuid():N}";
         string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-remote-list-{Guid.NewGuid():N}.db");
-        int OriginalLimit = DbConfig.DefaultRowLimit;
+        int OriginalLimit = Db.Settings.DefaultRowLimit;
         ModuleDef Definition = new() { Name = ModuleName, ConnectionName = ConnectionName, ClassName = typeof(ListSqlModule).AssemblyQualifiedName };
         Definition.Table.Name = "Customer";
         Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
@@ -68,7 +68,7 @@ public class DataModuleSelectListTests
             SqlStore Store = SqlStores.CreateSqlStore(ConnectionName);
             Store.ExecSql("CREATE TABLE Customer (Id TEXT PRIMARY KEY, Name TEXT, IsActive INTEGER, Amount INTEGER)");
             Store.ExecSql("INSERT INTO Customer VALUES ('C1', 'Alice', 0, 5), ('C2', 'Zoe', 1, 15), ('C3', 'Bob', 0, 5)");
-            DbConfig.DefaultRowLimit = 1;
+            Db.Settings.DefaultRowLimit = 1;
             RemOp.Initialize();
             RemoteRequest Request = new() { Id = Guid.NewGuid().ToString(), OperationName = "DataModule.SelectList" };
             Request.Params["ModuleName"] = ModuleName;
@@ -131,7 +131,7 @@ public class DataModuleSelectListTests
         }
         finally
         {
-            DbConfig.DefaultRowLimit = OriginalLimit;
+            Db.Settings.DefaultRowLimit = OriginalLimit;
             DataRegistry.Modules.Remove(Definition);
             Db.Connections.Remove(ConnectionName);
             if (File.Exists(FilePath))

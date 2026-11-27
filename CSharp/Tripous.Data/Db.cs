@@ -29,6 +29,14 @@ static public class Db
 
     // ● properties
     /// <summary>
+    /// Gets or sets the file name used to persist global settings for this layer.
+    /// </summary>
+    static public string DbGlobalSettingsFileName { get; set; } = "DbGlobalSettings.json";
+    /// <summary>
+    /// Gets the shared observable settings for this layer.
+    /// </summary>
+    static public DbGlobalSettings Settings { get; } = new();
+    /// <summary>
     /// Gets the collection of database connections.
     /// </summary>
     static public DbConnections Connections { get; } = new();

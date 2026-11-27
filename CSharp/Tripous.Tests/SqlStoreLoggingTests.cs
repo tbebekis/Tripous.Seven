@@ -310,7 +310,7 @@ public class SqlStoreLoggingTests
     public void SqlLoggingUsesConfigurationAndFormatsParameters()
     {
         string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-sql-log-{Guid.NewGuid():N}.db");
-        bool PreviousEnabled = DbConfig.LogSqlStatements;
+        bool PreviousEnabled = Db.Settings.LogSqlStatements;
         bool PreviousDebug = Sys.DebugMode;
         string PreviousIni = DbConfig.SysDbIniTableName;
         List<string> Messages = new();
@@ -318,10 +318,10 @@ public class SqlStoreLoggingTests
         {
             SqlStore Store = new(new DbConnectionInfo { ConnectionString = $"Data Source={FilePath};Pooling=False" });
             Sys.LogInfoProc = Messages.Add;
-            DbConfig.LogSqlStatements = false;
+            Db.Settings.LogSqlStatements = false;
             Store.Select("SELECT 1");
             Assert.Empty(Messages);
-            DbConfig.LogSqlStatements = true;
+            Db.Settings.LogSqlStatements = true;
             Sys.DebugMode = false;
             Store.Select("SELECT :Value", new SqlParams().Add("Value", "sensitive-value"));
             Assert.Equal("SELECT :Value", Assert.Single(Messages).TrimEnd());
@@ -339,7 +339,7 @@ public class SqlStoreLoggingTests
         }
         finally
         {
-            DbConfig.LogSqlStatements = PreviousEnabled;
+            Db.Settings.LogSqlStatements = PreviousEnabled;
             Sys.DebugMode = PreviousDebug;
             DbConfig.SysDbIniTableName = PreviousIni;
             Sys.LogInfoProc = null;

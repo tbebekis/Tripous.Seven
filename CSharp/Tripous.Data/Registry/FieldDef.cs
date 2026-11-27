@@ -124,6 +124,18 @@ public class FieldDef : BaseDef
             throw new InvalidOperationException($"Computed field '{Name}' cannot have a default value.");
         if (DefaultValue != null)
             ParseDefaultValue();
+        if (IsLookup)
+        {
+            LookupDef Definition = DataRegistry.Lookups.Find(LookupSource)
+                ?? throw new InvalidOperationException($"Field '{Name}' refers to unregistered lookup '{LookupSource}'.");
+            Definition.CheckDescriptor();
+        }
+        if (IsLocator)
+        {
+            LocatorDef Definition = DataRegistry.Locators.Find(Locator)
+                ?? throw new InvalidOperationException($"Field '{Name}' refers to unregistered locator '{Locator}'.");
+            Definition.CheckDescriptor();
+        }
         if (!string.IsNullOrWhiteSpace(SnapshotOf))
         {
             if (!IsNativeField || IsNoInsertOrUpdate)

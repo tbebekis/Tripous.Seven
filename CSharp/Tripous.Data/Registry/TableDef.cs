@@ -542,6 +542,11 @@ public class TableDef : BaseDef
         }
     }
     /// <summary>
+    /// Gets the memory column name used for a projected join field.
+    /// </summary>
+    static internal string GetJoinColumnName(TableDef Join, FieldDef Field)
+        => string.IsNullOrWhiteSpace(Field.Alias) ? $"{Join.Alias}__{Field.Name}" : Field.Alias;
+    /// <summary>
     /// Collects projected columns and their required joins in SQL order.
     /// </summary>
     List<(FieldDef Field, string ColumnName, string Sql)> GetJoinProjections(List<string> JoinClauses)
@@ -587,7 +592,7 @@ public class TableDef : BaseDef
                 if (string.Equals(Field.Name, Join.KeyField, StringComparison.OrdinalIgnoreCase)
                     || SnapshotSources.Contains($"{Join.Alias}.{Field.Name}"))
                     continue;
-                string ColumnName = string.IsNullOrWhiteSpace(Field.Alias) ? $"{Join.Alias}__{Field.Name}" : Field.Alias;
+                string ColumnName = GetJoinColumnName(Join, Field);
                 DataTableDef.ValidateIdentifier(ColumnName);
                 if (!Columns.Add(ColumnName))
                     throw new InvalidOperationException($"Duplicate projected column '{ColumnName}' in table '{Name}'.");

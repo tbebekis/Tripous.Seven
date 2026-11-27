@@ -19,6 +19,7 @@ public class ModuleDef : BaseDef
     string fClassName;
     SelectDefs fSelectList;
     SelectDefs fStocks;
+    DefList<ItemFactBoxDef> fFactBoxes;
     bool fCascadeDeletes = true;
     string fCodeProvider;
     string fCodeFieldName;
@@ -59,6 +60,7 @@ public class ModuleDef : BaseDef
         Table.CheckDescriptor();
         SelectList.CheckDescriptors();
         Stocks.CheckDescriptors();
+        FactBoxes.CheckDescriptors();
         if (!string.IsNullOrWhiteSpace(RowVersionFieldName))
         {
             FieldDef Field = Table.Fields.Find(RowVersionFieldName)
@@ -336,6 +338,20 @@ public class ModuleDef : BaseDef
                 return;
             fStocks = value;
             NotifyPropertyChanged(nameof(Stocks));
+        }
+    }
+    /// <summary>
+    /// Gets or sets the declared FactBoxes for an item of this module.
+    /// </summary>
+    public DefList<ItemFactBoxDef> FactBoxes
+    {
+        get => fFactBoxes ??= new();
+        set
+        {
+            if (ReferenceEquals(fFactBoxes, value))
+                return;
+            fFactBoxes = value;
+            NotifyPropertyChanged(nameof(FactBoxes));
         }
     }
     /// <summary>

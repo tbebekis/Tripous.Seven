@@ -187,7 +187,53 @@ static public class DataRegistry
         return CodeProviders.Find(Name) ?? AddCodeProvider(Name);
     }
 
+    // ● lookups
+    /// <summary>
+    /// Registers a named lookup definition for configuration by the caller.
+    /// </summary>
+    static public LookupDef AddLookup(string Name)
+    {
+        LookupDef Definition = new() { Name = Name };
+        Lookups.Add(Definition);
+        return Definition;
+    }
+    /// <summary>
+    /// Gets the registered lookup definition or adds one with the supplied name.
+    /// </summary>
+    static public LookupDef AddOrUpdateLookup(string Name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Name);
+        return Lookups.Find(Name) ?? AddLookup(Name);
+    }
+
+    // ● locators
+    /// <summary>
+    /// Registers a named locator definition for configuration by the caller.
+    /// </summary>
+    static public LocatorDef AddLocator(string Name)
+    {
+        LocatorDef Definition = new() { Name = Name };
+        Locators.Add(Definition);
+        return Definition;
+    }
+    /// <summary>
+    /// Gets the registered locator definition or adds one with the supplied name.
+    /// </summary>
+    static public LocatorDef AddOrUpdateLocator(string Name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(Name);
+        return Locators.Find(Name) ?? AddLocator(Name);
+    }
+
     // ● properties
+    /// <summary>
+    /// Gets the named locator definitions.
+    /// </summary>
+    static public DefList<LocatorDef> Locators { get; } = new();
+    /// <summary>
+    /// Gets the named lookup definitions.
+    /// </summary>
+    static public DefList<LookupDef> Lookups { get; } = new();
     /// <summary>
     /// Gets the named data module definitions.
     /// </summary>

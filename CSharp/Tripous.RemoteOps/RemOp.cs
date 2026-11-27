@@ -31,9 +31,13 @@ static public class RemOp
             RemoteOperations.Register(typeof(DataModuleInitialize));
             RemoteOperations.Register(typeof(DataModuleInsert));
             RemoteOperations.Register(typeof(DataModuleEdit));
+            RemoteOperations.Register(typeof(DataModuleGetFactBoxes));
             RemoteOperations.Register(typeof(DataModuleDelete));
             RemoteOperations.Register(typeof(DataModuleSelectList));
             RemoteOperations.Register(typeof(DataModuleCommit));
+            RemoteOperations.Register(typeof(LookupGetList));
+            RemoteOperations.Register(typeof(LocatorGetInfo));
+            RemoteOperations.Register(typeof(LocatorExecute));
             fInitialized = true;
         }
     }

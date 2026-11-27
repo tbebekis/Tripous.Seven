@@ -60,4 +60,61 @@ public class FieldDefTests
         Field.Flags = FieldFlags.Extra;
         Assert.Equal(new[] { "Flags", "IsNativeField", "IsNoInsertOrUpdate" }, Changes);
     }
+    /// <summary>
+    /// A field requires a registered, valid lookup descriptor before SQL execution.
+    /// </summary>
+    [Fact]
+    public void ChecksLookupReferenceAndDefinition()
+    {
+        string Name = $"Lookup-{Guid.NewGuid():N}";
+        FieldDef Field = new() { Name = "CountryId", DataType = DataFieldType.Int64, LookupSource = Name };
+        Assert.Contains(Name, Assert.Throws<InvalidOperationException>(Field.CheckDescriptor).Message);
+
+        LookupDef Lookup = DataRegistry.AddLookup(Name);
+        try
+        {
+            Lookup.ClassName = typeof(string).FullName;
+            Assert.Contains(Name, Assert.Throws<InvalidOperationException>(Field.CheckDescriptor).Message);
+            Lookup.ClassName = null;
+            Lookup.SqlText = "SELECT Id, Name FROM Countries";
+            Field.CheckDescriptor();
+        }
+        finally
+        {
+            DataRegistry.Lookups.Remove(Lookup);
+        }
+    }
+    /// <summary>
+    /// A locator reference validates its registered definition and nested fields.
+    /// </summary>
+    [Fact]
+    public void ChecksLocatorReferenceAndFields()
+    {
+        string Name = $"Locator-{Guid.NewGuid():N}";
+        FieldDef Field = new() { Name = "CountryId", DataType = DataFieldType.Int64, Locator = Name };
+        Assert.Contains(Name, Assert.Throws<InvalidOperationException>(Field.CheckDescriptor).Message);
+
+        LocatorDef Locator = DataRegistry.AddLocator(Name);
+        try
+        {
+            Locator.Source = "Countries";
+            Locator.Add("Id", DataFieldType.Int64);
+            Locator.Add("Code");
+            Locator.Add("Name", DataFieldType.None);
+            Locator.AddSearchFields("Code");
+            Locator.AddResultFields("Id", "Code", "Name");
+            Assert.Contains("Name", Assert.Throws<InvalidOperationException>(Field.CheckDescriptor).Message);
+
+            Locator.Add("Name");
+            Field.CheckDescriptor();
+            LocatorDef Copy = Json.Deserialize<LocatorDef>(Json.Serialize(Locator));
+            Copy.CheckDescriptor();
+            Assert.Same(Copy, Copy.Fields.Get("Code").LocatorDef);
+            Assert.Equal(new[] { "Code" }, Copy.GetSearchFields(IsMultiRow: true));
+        }
+        finally
+        {
+            DataRegistry.Locators.Remove(Locator);
+        }
+    }
 }

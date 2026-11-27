@@ -98,6 +98,8 @@ public class JsonDataTable
         Name = Source.TableName;
         IsOneToOne = Definition?.IsOneToOne ?? false;
         IsUiVisible = Definition?.IsUiVisible ?? true;
+        if (Definition != null)
+            Locators = new JsonLocatorList(Definition);
         if (Definition?.FieldGroups != null)
             FieldGroups.AddRange(Definition.FieldGroups);
         if (Source is MemTable Table)
@@ -243,4 +245,8 @@ public class JsonDataTable
     /// Gets or sets the deleted rows and their original values.
     /// </summary>
     public List<JsonDataRow> Deleted { get; set; } = new();
+    /// <summary>
+    /// Gets or sets the locators and mapping plans for this table's reference fields.
+    /// </summary>
+    public JsonLocatorList Locators { get; set; } = new();
 }

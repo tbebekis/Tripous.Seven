@@ -86,7 +86,7 @@ public class SqlStore
     /// </summary>
     void LogSql(DbCommand Command)
     {
-        if (!DbConfig.LogSqlStatements || Command == null || string.IsNullOrWhiteSpace(Command.CommandText))
+        if (!Db.Settings.LogSqlStatements || Command == null || string.IsNullOrWhiteSpace(Command.CommandText))
             return;
         string IniTable = DbConfig.SysDbIniTableName;
         if (!string.IsNullOrWhiteSpace(IniTable) && Command.CommandText.Contains(IniTable, StringComparison.OrdinalIgnoreCase))
