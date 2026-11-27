@@ -17,6 +17,7 @@ static public class SqlProviders
     static readonly Lazy<SqlProviderSqlite> fSqlite = new(() => new SqlProviderSqlite());
 
     static readonly Lazy<SqlProviderPostgreSql> fPostgreSql = new(() => new SqlProviderPostgreSql());
+    static readonly Lazy<SqlProviderFirebird> fFirebird = new(() => new SqlProviderFirebird());
 
     // ● static public
     /// <summary>
@@ -28,6 +29,7 @@ static public class SqlProviders
         {
             DbServerType.Sqlite => Sqlite,
             DbServerType.PostgreSql => PostgreSql,
+            DbServerType.Firebird => Firebird,
             _ => throw new NotSupportedException($"No SQL provider is available for {ServerType}.")
         };
     }
@@ -42,4 +44,8 @@ static public class SqlProviders
     /// Gets the shared PostgreSQL provider.
     /// </summary>
     static public SqlProviderPostgreSql PostgreSql => fPostgreSql.Value;
+    /// <summary>
+    /// Gets the shared Firebird provider.
+    /// </summary>
+    static public SqlProviderFirebird Firebird => fFirebird.Value;
 }

@@ -15,15 +15,18 @@ static internal class SqlTextScanner
 {
     // ● internal
     /// <summary>
-    /// Adds a top-level LIMIT before a trailing terminator or comment.
+    /// Adds the provider's top-level row limit before a trailing terminator or comment.
     /// </summary>
-    static internal string ApplyLimit(string SqlText, int RowLimit, bool PostgreSql = false)
+    static internal string ApplyLimit(string SqlText, int RowLimit, DbServerType ServerType)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(SqlText);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RowLimit);
+        bool PostgreSql = ServerType == DbServerType.PostgreSql;
+        bool Firebird = ServerType == DbServerType.Firebird;
         int Index = 0;
         int Depth = 0;
         int LastCodeEnd = 0;
+        bool AfterSelect = false;
         while (Index < SqlText.Length)
         {
             int Start = Index;
@@ -32,7 +35,10 @@ static internal class SqlTextScanner
             if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, PostgreSql))
             {
                 if (!Comment)
+                {
                     LastCodeEnd = Index;
+                    AfterSelect = false;
+                }
                 continue;
             }
             char Ch = SqlText[Index];
@@ -47,19 +53,28 @@ static internal class SqlTextScanner
                     Index++;
                 bool Parameter = Start > 0 && (SqlText[Start - 1] == ':' || SqlText[Start - 1] == '@' || SqlText[Start - 1] == '$');
                 var Word = SqlText.AsSpan(Start, Index - Start);
-                if (Depth == 0 && !Parameter && (Word.Equals("limit", StringComparison.OrdinalIgnoreCase)
-                    || (PostgreSql && Word.Equals("fetch", StringComparison.OrdinalIgnoreCase))))
+                if (Depth == 0 && !Parameter && (
+                    (!Firebird && Word.Equals("limit", StringComparison.OrdinalIgnoreCase))
+                    || ((PostgreSql || Firebird) && Word.Equals("fetch", StringComparison.OrdinalIgnoreCase))
+                    || (Firebird && (Word.Equals("offset", StringComparison.OrdinalIgnoreCase)
+                        || Word.Equals("rows", StringComparison.OrdinalIgnoreCase)
+                        || (AfterSelect && (Word.Equals("first", StringComparison.OrdinalIgnoreCase)
+                            || Word.Equals("skip", StringComparison.OrdinalIgnoreCase)))))))
                     throw new InvalidOperationException($"List SELECTs must not specify a top-level {Word}; Tripous applies the row limit.");
+                AfterSelect = Firebird && Depth == 0 && !Parameter && Word.Equals("select", StringComparison.OrdinalIgnoreCase);
                 LastCodeEnd = Index;
                 continue;
             }
             Index++;
             if (!char.IsWhiteSpace(Ch))
+            {
                 LastCodeEnd = Index;
+                AfterSelect = false;
+            }
         }
         if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
             LastCodeEnd--;
-        return SqlText.Insert(LastCodeEnd, $" LIMIT {RowLimit}");
+        return SqlText.Insert(LastCodeEnd, Firebird ? $" FETCH FIRST {RowLimit} ROWS ONLY" : $" LIMIT {RowLimit}");
     }
 
     /// <summary>

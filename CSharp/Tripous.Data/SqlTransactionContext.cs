@@ -42,11 +42,11 @@ public class SqlTransactionContext : IDisposable
         fConnection = Connection;
     }
 
-    // ● public
+    // ● internal
     /// <summary>
-    /// Opens the connection if needed and starts the context's single transaction.
+    /// Opens the connection and starts the transaction using the provider's transaction factory.
     /// </summary>
-    public void BeginTransaction()
+    internal void BeginTransaction(Func<DbConnection, DbTransaction> Begin)
     {
         EnsureNotDisposed();
         if (fBeginCalled)
@@ -54,8 +54,14 @@ public class SqlTransactionContext : IDisposable
         fBeginCalled = true;
         if (fConnection.State != ConnectionState.Open)
             fConnection.Open();
-        fTransaction = fConnection.BeginTransaction();
+        fTransaction = Begin(fConnection);
     }
+
+    // ● public
+    /// <summary>
+    /// Opens the connection if needed and starts the context's single transaction.
+    /// </summary>
+    public void BeginTransaction() => BeginTransaction(Connection => Connection.BeginTransaction());
     /// <summary>
     /// Commits the active transaction.
     /// </summary>

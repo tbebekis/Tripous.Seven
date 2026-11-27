@@ -48,6 +48,41 @@ public class SqlProviderTests
 
     // ● public
     /// <summary>
+    /// Firebird limits the outer result while preserving nested limits and trailing comments.
+    /// </summary>
+    [Fact]
+    public void FirebirdRowLimitAppliesToCompleteSelect()
+    {
+        SqlProvider Provider = SqlProviders.Firebird;
+        const string Query = "WITH Sample AS (SELECT FIRST 2 Id FROM Item) SELECT Id FROM Sample UNION ALL SELECT Id FROM Item ORDER BY 1 NULLS FIRST";
+        Assert.Equal(Query + " FETCH FIRST 5 ROWS ONLY; -- list", Provider.ApplyRowLimit(Query + "; -- list", 5));
+        Assert.Equal("SELECT 'ROWS', :First FROM Item FETCH FIRST 5 ROWS ONLY", Provider.ApplyRowLimit("SELECT 'ROWS', :First FROM Item", 5));
+    }
+    /// <summary>
+    /// Firebird list SELECTs leave outer row limits to the framework.
+    /// </summary>
+    [Theory]
+    [InlineData("SELECT /* comment */ FIRST 2 Id FROM Item")]
+    [InlineData("SELECT SKIP 2 Id FROM Item")]
+    [InlineData("SELECT Id FROM Item ROWS 2")]
+    [InlineData("SELECT Id FROM Item OFFSET 2 ROWS")]
+    [InlineData("SELECT Id FROM Item FETCH FIRST 2 ROWS ONLY")]
+    public void FirebirdRowLimitRejectsExistingOuterLimit(string SqlText)
+    {
+        Assert.Throws<InvalidOperationException>(() => SqlProviders.Firebird.ApplyRowLimit(SqlText, 5));
+    }
+    /// <summary>
+    /// Firebird declares UTF-8 after the length of each Unicode field.
+    /// </summary>
+    [Fact]
+    public void FirebirdUnicodeVarcharIncludesExplicitCharacterSet()
+    {
+        const string Sql = "CREATE TABLE Item (Name @NVARCHAR(40), Code @VARCHAR(20), Note @NVARCHAR (80) DEFAULT '@NVARCHAR(1)')";
+        Assert.Equal("CREATE TABLE Item (Name varchar(40) CHARACTER SET UTF8, Code varchar(20), Note varchar (80) CHARACTER SET UTF8 DEFAULT '@NVARCHAR(1)')",
+            SqlProviders.Firebird.ReplaceDataTypePlaceholders(Sql));
+    }
+
+    /// <summary>
     /// Provider builders expose configured database names and preserve SQLite path placeholders.
     /// </summary>
     [Fact]
@@ -149,7 +184,7 @@ public class SqlProviderTests
         Assert.Equal("Catalog", Connection.Database);
         Assert.Same(SqlProviders.PostgreSql, Provider);
 
-        const string Sql = """select array[:Value]::int[], $tag$:ignored @BLOB$tag$, E'it\'s :ignored', 1 /* /* nested */ :ignored */, cast(null as @BLOB)""";
+        const string Sql = @"select array[:Value]::int[], $tag$:ignored @BLOB$tag$, E'it\'s :ignored', 1 /* /* nested */ :ignored */, cast(null as @BLOB)";
         using DbCommand Command = Provider.CreateCommand(Connection, Sql, new SqlParams().Add("Value", 7));
         Assert.Equal(Sql.Replace(":Value", "@Value").Replace("as @BLOB", "as bytea"), Command.CommandText);
         Assert.Equal(7, Assert.IsAssignableFrom<DbParameter>(Assert.Single(Command.Parameters)).Value);
@@ -306,11 +341,10 @@ public class SqlProviderTests
         Command.ExecuteNonQuery();
         Command.CommandText = Provider.RenameColumnSql("Order Lines", "Old Name", "New \"Name");
         Command.ExecuteNonQuery();
-        Command.CommandText = $"SELECT {Provider.Concat("\"New \"\"Name\"", "' two'")}, {Provider.ServerDateTimeSql} FROM \"Order Lines\"";
+        Command.CommandText = $"SELECT {Provider.Concat("\"New \"\"Name\"", "' two'")} FROM \"Order Lines\"";
         using DbDataReader Reader = Command.ExecuteReader();
         Assert.True(Reader.Read());
         Assert.Equal("one two", Reader.GetString(0));
-        Assert.NotEqual(default, Reader.GetDateTime(1));
 
         SqlStore Store = new(new DbConnectionInfo { ConnectionString = "Data Source=:memory:" });
         DateTime Before = DateTime.UtcNow.AddSeconds(-1);

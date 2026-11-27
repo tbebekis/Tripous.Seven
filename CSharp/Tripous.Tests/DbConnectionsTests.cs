@@ -40,7 +40,13 @@ public class DbConnectionsTests
         try
         {
             DbConnections Source = new();
-            Source.Add(new DbConnectionInfo { Name = "Main", ConnectionString = "Data Source=main.db", CommandTimeoutSeconds = 45 });
+            Source.Add(new DbConnectionInfo
+            {
+                Name = "Main",
+                ConnectionString = "Data Source=main.db",
+                CommandTimeoutSeconds = 45,
+                TransactionIsolationLevel = IsolationLevel.ReadCommitted,
+            });
             Source.Save(FilePath);
             Assert.DoesNotContain("Schema", File.ReadAllText(FilePath));
             DbConnections Target = new();
@@ -51,6 +57,7 @@ public class DbConnectionsTests
             Assert.Single(Target.List);
             Assert.Equal("Data Source=main.db", Target.Get("main").ConnectionString);
             Assert.Equal(45, Target.Get("Main").CommandTimeoutSeconds);
+            Assert.Equal(IsolationLevel.ReadCommitted, Target.Get("Main").TransactionIsolationLevel);
             Assert.Same(Target.Get("Main"), Target.Get("Main").Schema.ConnectionInfo);
         }
         finally

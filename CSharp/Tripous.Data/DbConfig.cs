@@ -24,6 +24,11 @@ static public class DbConfig
     /// </summary>
     static public int DefaultRowLimit { get; set; } = 400;
     /// <summary>
+    /// Gets or sets the default transaction isolation level for database connections.
+    /// Unspecified uses the provider's default.
+    /// </summary>
+    static public IsolationLevel DefaultTransactionIsolationLevel { get; set; } = IsolationLevel.Unspecified;
+    /// <summary>
     /// Updates the item table field definitions from database table metadata during module initialization.
     /// When enabled, missing columns are added and can participate in generated writes. This allows
     /// tests and simple modules to specify just the table name when the default key name applies.

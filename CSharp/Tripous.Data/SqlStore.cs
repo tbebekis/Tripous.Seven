@@ -198,7 +198,7 @@ public class SqlStore
     /// </summary>
     public DateTime GetServerDateTime()
     {
-        using (DataTable Result = Select($"SELECT {fProvider.ServerDateTimeSql}"))
+        using (DataTable Result = Select(fProvider.ServerDateTimeSql))
         {
             if (Result.Rows.Count == 0 || Result.Rows[0].IsNull(0))
                 throw new InvalidOperationException("The database did not return a server timestamp.");

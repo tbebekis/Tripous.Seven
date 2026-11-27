@@ -22,7 +22,6 @@ public class DbConnectionInfo
     /// Returns the adapter for editing this connection's string.
     /// </summary>
     public DbConAdapter GetConnectionStringAdapter() => DbConAdapters.Get(DbServerType);
-
     /// <summary>
     /// Returns the SQL provider for this connection's server type.
     /// </summary>
@@ -45,6 +44,12 @@ public class DbConnectionInfo
     /// Gets or sets the default command timeout in seconds.
     /// </summary>
     public int CommandTimeoutSeconds { get; set; } = 30;
+    /// <summary>
+    /// Gets or sets the isolation level for transactions opened by a store on this connection.
+    /// Unspecified inherits the application default from DbConfig.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<IsolationLevel>))]
+    public IsolationLevel TransactionIsolationLevel { get; set; } = IsolationLevel.Unspecified;
     /// <summary>
     /// Gets the shared metadata schema registered under this connection's name.
     /// Unload and reload it when connection settings change.

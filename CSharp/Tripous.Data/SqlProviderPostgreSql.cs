@@ -14,10 +14,9 @@ namespace Tripous.Data;
 public class SqlProviderPostgreSql : SqlProvider
 {
     // ● private fields
-    static readonly string fGeneratorExistsSql = $"""
+    static readonly string fGeneratorExistsSql = $@"
         SELECT 1 FROM pg_catalog.pg_class
-        WHERE oid = pg_catalog.to_regclass({GlobalPrefix}GeneratorName) AND relkind = 'S'
-        """;
+        WHERE oid = pg_catalog.to_regclass({GlobalPrefix}GeneratorName) AND relkind = 'S'";
 
     // ● construction
     internal SqlProviderPostgreSql()
@@ -137,15 +136,15 @@ public class SqlProviderPostgreSql : SqlProvider
 
     // ● SQL
     /// <summary>
-    /// Gets the PostgreSQL expression for the current UTC timestamp.
+    /// Gets the PostgreSQL query for the current UTC timestamp.
     /// </summary>
-    public override string ServerDateTimeSql => "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')";
+    public override string ServerDateTimeSql => "SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC'";
     /// <summary>
     /// Applies the framework's row limit to a list SELECT.
     /// List SELECTs must leave top-level LIMIT and FETCH to Tripous.
     /// </summary>
     public override string ApplyRowLimit(string SqlText, int RowLimit)
-        => SqlTextScanner.ApplyLimit(SqlText, RowLimit, PostgreSql: true);
+        => SqlTextScanner.ApplyLimit(SqlText, RowLimit, ServerType);
 
     // ● id generation
     /// <summary>
@@ -226,7 +225,7 @@ public class SqlProviderPostgreSql : SqlProvider
         SqlStore Store = new(new DbConnectionInfo { ConnectionString = ConnectionString, DbServerType = ServerType });
         using (SqlTransactionContext Context = Store.BeginTransactionContext())
         {
-            string Sql = $"""
+            string Sql = $@"
                 SELECT pg_catalog.setval(
                     COALESCE(
                         (SELECT pg_catalog.pg_get_serial_sequence({GlobalPrefix}TableName, a.attname)::regclass
@@ -238,8 +237,7 @@ public class SqlProviderPostgreSql : SqlProvider
                          WHERE c.oid = pg_catalog.to_regclass({GlobalPrefix}GeneratorName) AND c.relkind = 'S')
                     ),
                     {GlobalPrefix}Value
-                )
-                """;
+                )";
             SqlParams Params = new SqlParams().Add("TableName", TableName).Add("GeneratorName", "G_" + TableName).Add("Value", Value);
             object Result = Store.ExecuteScalar(Context.Transaction, Sql, Params);
             if (Result == null || Result == DBNull.Value)

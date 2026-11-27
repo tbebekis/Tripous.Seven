@@ -145,16 +145,16 @@ public class SqlProviderSqlite : SqlProvider
     public override string Concat(params string[] Parts) => string.Join(" || ", Parts);
 
     /// <summary>
-    /// Gets the SQLite expression for the current UTC timestamp.
+    /// Gets the SQLite query for the current UTC timestamp.
     /// </summary>
-    public override string ServerDateTimeSql => "CURRENT_TIMESTAMP";
+    public override string ServerDateTimeSql => "SELECT CURRENT_TIMESTAMP";
 
     /// <summary>
     /// Applies the framework's limit to a SQLite list SELECT.
     /// List SELECTs must not contain their own top-level LIMIT clause.
     /// </summary>
     public override string ApplyRowLimit(string SqlText, int RowLimit)
-        => SqlTextScanner.ApplyLimit(SqlText, RowLimit);
+        => SqlTextScanner.ApplyLimit(SqlText, RowLimit, ServerType);
 
     /// <summary>
     /// Creates an empty SQLite database file without changing an existing file.
