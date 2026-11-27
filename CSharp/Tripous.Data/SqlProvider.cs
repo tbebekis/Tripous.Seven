@@ -421,7 +421,7 @@ public abstract class SqlProvider
         int Index = 0;
         while (Index < SqlText.Length)
         {
-            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, ServerType == DbServerType.PostgreSql))
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, ServerType))
                 continue;
             if (SqlText[Index] != '@' || (Index > 0 && (char.IsLetterOrDigit(SqlText[Index - 1]) || SqlText[Index - 1] == '_' || SqlText[Index - 1] == '$' || SqlText[Index - 1] == '@')))
             {
@@ -523,7 +523,7 @@ public abstract class SqlProvider
             Map.Add(Param.Name, Param);
 
         SqlText = ReplaceDataTypePlaceholders(SqlText);
-        var Refs = SqlParamScanner.Scan(SqlText, GlobalPrefix, ServerType == DbServerType.PostgreSql);
+        var Refs = SqlParamScanner.Scan(SqlText, GlobalPrefix, ServerType);
         var Added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var Text = new StringBuilder();
         var Parameters = new List<DbParameter>();

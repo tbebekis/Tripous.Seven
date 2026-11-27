@@ -156,7 +156,7 @@ public class SqlProviderPostgreSql : SqlProvider
         ArgumentNullException.ThrowIfNull(Store);
         ArgumentException.ThrowIfNullOrWhiteSpace(TableName);
         DataTableDef.ValidateIdentifier(KeyField);
-        string ReturningSql = $"{SqlTextScanner.PrepareForAppend(SqlText, PostgreSql: true)}RETURNING {KeyField}";
+        string ReturningSql = $"{SqlTextScanner.PrepareForAppend(SqlText, ServerType)}RETURNING {KeyField}";
         object Id = Store.ExecuteScalar(Transaction, ReturningSql, Params);
         if (Id == null || Id == DBNull.Value)
             throw new InvalidOperationException($"Insert did not return a generated key for table '{TableName}'.");

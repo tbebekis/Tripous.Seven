@@ -121,6 +121,9 @@ static public class DbSchemaLoader
             string FieldName = Text(Row, "FieldName");
             if (!string.IsNullOrEmpty(FieldName))
                 Index.Columns = Append(Index.Columns, FieldName);
+            string Expression = Text(Row, "FieldExpression");
+            if (!string.IsNullOrEmpty(Expression))
+                Index.SourceCode = string.IsNullOrEmpty(Index.SourceCode) ? Expression : Index.SourceCode + ", " + Expression;
         }
     }
     static void LoadConstraints(DbSchema Schema, DataTable Rows)
@@ -150,6 +153,7 @@ static public class DbSchemaLoader
                 Constraint.SchemaName = Text(Row, "SchemaName");
                 Constraint.ConstraintType = Type;
                 Constraint.ConstraintTypeText = Text(Row, "ConstraintTypeText");
+                Constraint.SourceCode = Text(Row, "Definition");
                 Items.Add(Key, Constraint);
             }
             Constraint.Columns = Append(Constraint.Columns, Text(Row, "FieldName"));

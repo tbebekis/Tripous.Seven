@@ -23,16 +23,20 @@ static internal class SqlTextScanner
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RowLimit);
         bool PostgreSql = ServerType == DbServerType.PostgreSql;
         bool Firebird = ServerType == DbServerType.Firebird;
+        bool MySql = ServerType == DbServerType.MySql;
         int Index = 0;
         int Depth = 0;
         int LastCodeEnd = 0;
+        int LockClauseStart = -1;
         bool AfterSelect = false;
         while (Index < SqlText.Length)
         {
             int Start = Index;
-            bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
-                || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
-            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, PostgreSql))
+            if (MySql && SqlText.AsSpan(Index).StartsWith("/*!", StringComparison.Ordinal))
+                throw new InvalidOperationException("MySQL list SELECTs must not contain executable comments.");
+            bool Comment = StartsLineComment(SqlText, Index, ServerType)
+                || SqlText.AsSpan(Index).StartsWith("/*", StringComparison.Ordinal);
+            if (SkipProtectedRegion(SqlText, ref Index, ServerType))
             {
                 if (!Comment)
                 {
@@ -53,6 +57,9 @@ static internal class SqlTextScanner
                     Index++;
                 bool Parameter = Start > 0 && (SqlText[Start - 1] == ':' || SqlText[Start - 1] == '@' || SqlText[Start - 1] == '$');
                 var Word = SqlText.AsSpan(Start, Index - Start);
+                if (MySql && Depth == 0 && !Parameter && LockClauseStart < 0
+                    && (Word.Equals("for", StringComparison.OrdinalIgnoreCase) || Word.Equals("lock", StringComparison.OrdinalIgnoreCase)))
+                    LockClauseStart = LastCodeEnd;
                 if (Depth == 0 && !Parameter && (
                     (!Firebird && Word.Equals("limit", StringComparison.OrdinalIgnoreCase))
                     || ((PostgreSql || Firebird) && Word.Equals("fetch", StringComparison.OrdinalIgnoreCase))
@@ -74,6 +81,11 @@ static internal class SqlTextScanner
         }
         if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
             LastCodeEnd--;
+        if (LockClauseStart >= 0)
+        {
+            string Separator = char.IsWhiteSpace(SqlText[LockClauseStart]) ? "" : " ";
+            return SqlText.Insert(LockClauseStart, $" LIMIT {RowLimit}{Separator}");
+        }
         return SqlText.Insert(LastCodeEnd, Firebird ? $" FETCH FIRST {RowLimit} ROWS ONLY" : $" LIMIT {RowLimit}");
     }
 
@@ -81,16 +93,16 @@ static internal class SqlTextScanner
     /// Removes a trailing statement terminator and adds a newline so appended SQL
     /// remains executable when the statement ends with a line comment.
     /// </summary>
-    static internal string PrepareForAppend(string SqlText, bool PostgreSql = false)
+    static internal string PrepareForAppend(string SqlText, DbServerType ServerType = DbServerType.Sqlite)
     {
         ArgumentNullException.ThrowIfNull(SqlText);
         int Index = 0;
         int LastCodeEnd = 0;
         while (Index < SqlText.Length)
         {
-            bool Comment = SqlText[Index] == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-'
-                || SqlText[Index] == '/' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '*';
-            if (SkipProtectedRegion(SqlText, ref Index, PostgreSql))
+            bool Comment = StartsLineComment(SqlText, Index, ServerType)
+                || SqlText.AsSpan(Index).StartsWith("/*", StringComparison.Ordinal);
+            if (SkipProtectedRegion(SqlText, ref Index, ServerType))
             {
                 if (!Comment)
                     LastCodeEnd = Index;
@@ -108,8 +120,10 @@ static internal class SqlTextScanner
     /// Advances past a quoted region or comment starting at the current index.
     /// Returns false without changing the index when no such region starts there.
     /// </summary>
-    static internal bool SkipProtectedRegion(string SqlText, ref int Index, bool PostgreSql = false)
+    static internal bool SkipProtectedRegion(string SqlText, ref int Index, DbServerType ServerType = DbServerType.Sqlite)
     {
+        bool PostgreSql = ServerType == DbServerType.PostgreSql;
+        bool MySql = ServerType == DbServerType.MySql;
         char Ch = SqlText[Index];
         if (PostgreSql && Ch == '$' && (Index == 0 || !IsPostgreSqlIdentifierPart(SqlText[Index - 1])))
         {
@@ -128,10 +142,11 @@ static internal class SqlTextScanner
                 return true;
             }
         }
-        if (Ch == '\'' || Ch == '"' || (!PostgreSql && (Ch == '`' || Ch == '[')))
+        if (Ch == '\'' || Ch == '"' || (!PostgreSql && Ch == '`') || (!PostgreSql && !MySql && Ch == '['))
         {
-            bool EscapeString = PostgreSql && Ch == '\'' && Index > 0 && (SqlText[Index - 1] is 'E' or 'e')
-                && (Index == 1 || !IsPostgreSqlIdentifierPart(SqlText[Index - 2]));
+            bool EscapeString = (MySql && (Ch is '\'' or '"'))
+                || (PostgreSql && Ch == '\'' && Index > 0 && (SqlText[Index - 1] is 'E' or 'e')
+                    && (Index == 1 || !IsPostgreSqlIdentifierPart(SqlText[Index - 2])));
             char End = Ch == '[' ? ']' : Ch;
             Index++;
             while (Index < SqlText.Length)
@@ -149,9 +164,9 @@ static internal class SqlTextScanner
             }
             return true;
         }
-        if (Ch == '-' && Index + 1 < SqlText.Length && SqlText[Index + 1] == '-')
+        if (StartsLineComment(SqlText, Index, ServerType))
         {
-            Index += 2;
+            Index += Ch == '#' ? 1 : 2;
             while (Index < SqlText.Length && SqlText[Index] != '\n' && SqlText[Index] != '\r')
                 Index++;
             return true;
@@ -182,5 +197,13 @@ static internal class SqlTextScanner
         return false;
     }
 
+    // ● private
+    static bool StartsLineComment(string SqlText, int Index, DbServerType ServerType)
+    {
+        bool MySql = ServerType == DbServerType.MySql;
+        return (MySql && SqlText[Index] == '#') || (SqlText.AsSpan(Index).StartsWith("--", StringComparison.Ordinal)
+            && (!MySql || (Index + 2 < SqlText.Length
+                && (char.IsWhiteSpace(SqlText[Index + 2]) || char.IsControl(SqlText[Index + 2])))));
+    }
     static bool IsPostgreSqlIdentifierPart(char Ch) => char.IsLetterOrDigit(Ch) || Ch is '_' or '$';
 }

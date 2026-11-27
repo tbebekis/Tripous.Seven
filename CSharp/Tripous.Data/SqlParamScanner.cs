@@ -19,16 +19,16 @@ static public class SqlParamScanner
     /// Parameter names begin with a letter or underscore and contain letters, digits, or underscores.
     /// </summary>
     static public List<SqlParamRef> Scan(string SqlText, char Prefix)
-        => Scan(SqlText, Prefix, PostgreSql: false);
+        => Scan(SqlText, Prefix, DbServerType.Sqlite);
 
-    static internal List<SqlParamRef> Scan(string SqlText, char Prefix, bool PostgreSql)
+    static internal List<SqlParamRef> Scan(string SqlText, char Prefix, DbServerType ServerType)
     {
         ArgumentNullException.ThrowIfNull(SqlText);
         List<SqlParamRef> Result = new();
         int Index = 0;
         while (Index < SqlText.Length)
         {
-            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, PostgreSql))
+            if (SqlTextScanner.SkipProtectedRegion(SqlText, ref Index, ServerType))
                 continue;
             char Ch = SqlText[Index];
             if (Ch == Prefix)

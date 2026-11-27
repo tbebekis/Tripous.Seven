@@ -48,6 +48,21 @@ public class SqlProviderTests
 
     // ● public
     /// <summary>
+    /// MySQL adds the outer limit around dialect-specific quotes and comments.
+    /// </summary>
+    [Fact]
+    public void MySqlRowLimitPreservesNestedQueriesAndTrailingComments()
+    {
+        SqlProvider Provider = SqlProviders.MySql;
+        const string Query = "WITH Sample AS (SELECT Id FROM Item LIMIT 2) SELECT Id AS `LIMIT` FROM Sample";
+        Assert.Equal(Query + " LIMIT 5; # LIMIT 10", Provider.ApplyRowLimit(Query + "; # LIMIT 10", 5));
+        Assert.Equal("SELECT 4--1 LIMIT 5", Provider.ApplyRowLimit("SELECT 4--1", 5));
+        const string LockingQuery = @"SELECT 'it\'s LIMIT' FROM Item";
+        Assert.Equal(LockingQuery + " LIMIT 5 FOR UPDATE -- lock", Provider.ApplyRowLimit(LockingQuery + " FOR UPDATE -- lock", 5));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("SELECT Id FROM Item LIMIT 2", 5));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("SELECT Id FROM Item /*! LIMIT 2 */", 5));
+    }
+    /// <summary>
     /// Firebird limits the outer result while preserving nested limits and trailing comments.
     /// </summary>
     [Fact]
