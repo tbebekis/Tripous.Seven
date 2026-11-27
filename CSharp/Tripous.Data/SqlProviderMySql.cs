@@ -144,6 +144,36 @@ public class SqlProviderMySql : SqlProvider
     /// Gets SQL that reads the last automatically generated ID on the current connection.
     /// </summary>
     public override string LastIdSql(string TableName) => "SELECT LAST_INSERT_ID()";
+    /// <summary>
+    /// Sets the requested next AUTO_INCREMENT value to one greater than Value.
+    /// MySQL keeps it above IDs already present in the table. The ALTER commits independently.
+    /// </summary>
+    public override void SetTableGeneratorTo(string ConnectionString, string TableName, long Value)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(Value);
+        long NextValue = checked(Value + 1);
+        string Table = QuoteName(TableName);
+        var Settings = (MySqlConnectionStringBuilder)CreateConnectionStringBuilder(ConnectionString);
+        Settings.AutoEnlist = false;
+        const string FindCounterSql = @"
+            SELECT 1
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :TableName
+                AND EXTRA LIKE '%auto_increment%'";
+        using (DbConnection Connection = OpenConnection(Settings.ConnectionString))
+        {
+            using (DbCommand FindCounter = CreateCommand(Connection, FindCounterSql, new SqlParams().Add("TableName", TableName)))
+            {
+                if (FindCounter.ExecuteScalar() == null)
+                    throw new InvalidOperationException($"No AUTO_INCREMENT column was found for table '{TableName}'.");
+            }
+            string SqlText = FormattableString.Invariant($"ALTER TABLE {Table} AUTO_INCREMENT = {NextValue}");
+            using (DbCommand Command = CreateCommand(Connection, SqlText, new SqlParams()))
+            {
+                Command.ExecuteNonQuery();
+            }
+        }
+    }
 
     // ● list queries
     /// <summary>
