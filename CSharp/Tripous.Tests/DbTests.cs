@@ -57,7 +57,7 @@ public class DbTests
             Assert.NotSame(First, Second);
             Assert.NotSame(First, SqlStores.CreateSqlStore(Name));
             Info.DbServerType = DbServerType.Oracle;
-            Assert.Throws<NotSupportedException>(() => SqlStores.CreateDefaultSqlStore());
+            Assert.NotSame(First, SqlStores.CreateDefaultSqlStore());
             Assert.Equal(1L, First.Select("SELECT 1 AS Result").Rows[0]["Result"]);
         }
         finally

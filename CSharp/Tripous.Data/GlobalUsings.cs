@@ -13,6 +13,7 @@ global using Microsoft.Data.Sqlite;
 global using Microsoft.Data.SqlClient;
 global using MySql.Data.MySqlClient;
 global using Npgsql;
+global using Oracle.ManagedDataAccess.Client;
 global using System.Collections;
 global using System.Collections.ObjectModel;
 global using System.Collections.Specialized;

@@ -25,6 +25,7 @@ static internal class SqlTextScanner
         bool Firebird = ServerType == DbServerType.Firebird;
         bool MySql = ServerType == DbServerType.MySql;
         bool MsSql = ServerType == DbServerType.MsSql;
+        bool Oracle = ServerType == DbServerType.Oracle;
         int Index = 0;
         int Depth = 0;
         int LastCodeEnd = 0;
@@ -93,8 +94,9 @@ static internal class SqlTextScanner
                         QueryHintStart = LastCodeEnd;
                 }
                 if (Depth == 0 && !Parameter && (
-                    (!Firebird && !MsSql && Word.Equals("limit", StringComparison.OrdinalIgnoreCase))
-                    || ((PostgreSql || Firebird) && Word.Equals("fetch", StringComparison.OrdinalIgnoreCase))
+                    (!Firebird && !MsSql && !Oracle && Word.Equals("limit", StringComparison.OrdinalIgnoreCase))
+                    || ((PostgreSql || Firebird || Oracle) && Word.Equals("fetch", StringComparison.OrdinalIgnoreCase))
+                    || (Oracle && (Word.Equals("offset", StringComparison.OrdinalIgnoreCase) || Word.Equals("for", StringComparison.OrdinalIgnoreCase)))
                     || (Firebird && (Word.Equals("offset", StringComparison.OrdinalIgnoreCase)
                         || Word.Equals("rows", StringComparison.OrdinalIgnoreCase)
                         || (AfterSelect && (Word.Equals("first", StringComparison.OrdinalIgnoreCase)
@@ -113,7 +115,11 @@ static internal class SqlTextScanner
             }
         }
         if (LastCodeEnd > 0 && SqlText[LastCodeEnd - 1] == ';')
+        {
             LastCodeEnd--;
+            if (Oracle)
+                SqlText = SqlText.Remove(LastCodeEnd, 1);
+        }
         if (MsSql)
         {
             if (SelectStart < 0)
@@ -135,7 +141,7 @@ static internal class SqlTextScanner
             string Separator = char.IsWhiteSpace(SqlText[LockClauseStart]) ? "" : " ";
             return SqlText.Insert(LockClauseStart, $" LIMIT {RowLimit}{Separator}");
         }
-        return SqlText.Insert(LastCodeEnd, Firebird ? $" FETCH FIRST {RowLimit} ROWS ONLY" : $" LIMIT {RowLimit}");
+        return SqlText.Insert(LastCodeEnd, (Firebird || Oracle) ? $" FETCH FIRST {RowLimit} ROWS ONLY" : $" LIMIT {RowLimit}");
     }
 
     /// <summary>

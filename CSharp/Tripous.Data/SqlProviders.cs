@@ -20,6 +20,7 @@ static public class SqlProviders
     static readonly Lazy<SqlProviderFirebird> fFirebird = new(() => new SqlProviderFirebird());
     static readonly Lazy<SqlProviderMySql> fMySql = new(() => new SqlProviderMySql());
     static readonly Lazy<SqlProviderMsSql> fMsSql = new(() => new SqlProviderMsSql());
+    static readonly Lazy<SqlProviderOracle> fOracle = new(() => new SqlProviderOracle());
 
     // ● static public
     /// <summary>
@@ -34,6 +35,7 @@ static public class SqlProviders
             DbServerType.Firebird => Firebird,
             DbServerType.MySql => MySql,
             DbServerType.MsSql => MsSql,
+            DbServerType.Oracle => Oracle,
             _ => throw new NotSupportedException($"No SQL provider is available for {ServerType}.")
         };
     }
@@ -60,4 +62,8 @@ static public class SqlProviders
     /// Gets the shared Microsoft SQL Server provider.
     /// </summary>
     static public SqlProviderMsSql MsSql => fMsSql.Value;
+    /// <summary>
+    /// Gets the shared Oracle provider.
+    /// </summary>
+    static public SqlProviderOracle Oracle => fOracle.Value;
 }
