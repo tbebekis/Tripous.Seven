@@ -56,6 +56,16 @@ public class Schema
     /// <summary>
     /// Executes registered versions newer than the version stored in SYS_INI.
     /// </summary>
+    /// <remarks>
+    /// Each version runs in two transactions. Some database engines also commit DDL
+    /// implicitly. A failure can leave changes in the database before the version
+    /// is recorded in SYS_INI.
+    /// <para>
+    /// Rehearse the upgrade and its recovery in staging with representative production
+    /// data and the same database engine and version. If you cannot verify the upgrade
+    /// and recovery there, apply the migration manually.
+    /// </para>
+    /// </remarks>
     public void Execute()
     {
         CheckDescriptor();

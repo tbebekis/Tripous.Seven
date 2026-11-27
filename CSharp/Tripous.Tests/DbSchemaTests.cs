@@ -73,7 +73,13 @@ public class DbSchemaTests
             DbConnectionInfo Info = new() { ConnectionString = $"Data Source={FilePath};Pooling=False" };
             SqlStore Store = new(Info);
             Store.ExecSql("CREATE TABLE Parent (A INTEGER, B INTEGER, PRIMARY KEY (B, A))");
-            Store.ExecSql("CREATE TABLE Child (X INTEGER, Y INTEGER, FOREIGN KEY (Y, X) REFERENCES Parent(B, A))");
+            Store.ExecSql("CREATE TABLE ParentWithoutRowId (A INTEGER, B INTEGER, PRIMARY KEY (B, A)) WITHOUT ROWID");
+            Store.ExecSql(@"CREATE TABLE Child (
+                X INTEGER, Y INTEGER,
+                FOREIGN KEY (Y, X) REFERENCES Parent(B, A),
+                FOREIGN KEY (X, Y) REFERENCES ParentWithoutRowId,
+                UNIQUE (Y, X)
+            )");
             Store.ExecSql("CREATE INDEX IX_Child ON Child(Y, X)");
             DbSchema Schema = new(Info);
             Schema.Load();
@@ -81,9 +87,17 @@ public class DbSchemaTests
             Assert.Equal("B;A", Parent.Constraints.Single(Item => Item.ConstraintType == ConstraintType.PrimaryKey).Columns);
             Assert.True(Parent.Columns.Single(Item => Item.Name == "A").IsNullable);
             DbMetaTable Child = Schema.Tables.Single(Item => Item.Name == "Child");
-            DbMetaForeignKey ForeignKey = Assert.Single(Child.ForeignKeys);
+            DbMetaTable ParentWithoutRowId = Schema.Tables.Single(Item => Item.Name == "ParentWithoutRowId");
+            Assert.Equal("B;A", ParentWithoutRowId.Constraints.Single(Item => Item.ConstraintType == ConstraintType.PrimaryKey).Columns);
+            Assert.False(ParentWithoutRowId.Columns.Single(Item => Item.Name == "A").IsNullable);
+            Assert.Equal(2, Child.ForeignKeys.Count);
+            DbMetaForeignKey ForeignKey = Child.ForeignKeys.Single(Item => Item.ForeignTable == "Parent");
             Assert.Equal("Y;X", ForeignKey.Columns);
             Assert.Equal("B;A", ForeignKey.ForeignFields);
+            DbMetaForeignKey ImplicitForeignKey = Child.ForeignKeys.Single(Item => Item.ForeignTable == "ParentWithoutRowId");
+            Assert.Equal("X;Y", ImplicitForeignKey.Columns);
+            Assert.Equal("B;A", ImplicitForeignKey.ForeignFields);
+            Assert.Equal("Y;X", Child.Constraints.Single(Item => Item.ConstraintType == ConstraintType.Unique).Columns);
             Assert.Equal("Y;X", Child.Indexes.Single(Item => Item.Name == "IX_Child").Columns);
         }
         finally
