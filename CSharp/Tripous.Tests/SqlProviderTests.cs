@@ -48,6 +48,82 @@ public class SqlProviderTests
 
     // ● public
     /// <summary>
+    /// Provider builders expose configured database names and preserve SQLite path placeholders.
+    /// </summary>
+    [Fact]
+    public void ConnectionStringBuildersReadDeclaredDatabaseNames()
+    {
+        SqlProvider Sqlite = SqlProviders.Sqlite;
+        const string SqliteSettings = "Data Source=[Data]/app.db";
+        Assert.IsType<SqliteConnectionStringBuilder>(Sqlite.CreateConnectionStringBuilder(SqliteSettings));
+        Assert.Equal("[Data]/app.db", Sqlite.GetDatabaseName(SqliteSettings));
+        Assert.Equal(string.Empty, Sqlite.GetDatabaseName("Pooling=False"));
+
+        SqlProvider PostgreSql = SqlProviders.PostgreSql;
+        const string PostgreSqlSettings = "Host=db.test;Database=Catalog;Username=tester";
+        Assert.IsType<Npgsql.NpgsqlConnectionStringBuilder>(PostgreSql.CreateConnectionStringBuilder(PostgreSqlSettings));
+        Assert.Equal("Catalog", PostgreSql.GetDatabaseName(PostgreSqlSettings));
+        Assert.Equal(string.Empty, PostgreSql.GetDatabaseName("Host=db.test;Username=tester"));
+    }
+
+    /// <summary>
+    /// SQL date literals use a Gregorian date and whole seconds regardless of the current culture.
+    /// </summary>
+    [Fact]
+    public void SqlDateLiteralsUseInvariantFormatting()
+    {
+        var PreviousCulture = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("th-TH");
+            DateTime Value = new(2026, 11, 27, 14, 5, 6, 987, DateTimeKind.Local);
+
+            Assert.Equal("'2026-11-27'", SqlProviders.Sqlite.QSDate(Value));
+            Assert.Equal("'2026-11-27 14:05:06'", SqlProviders.Sqlite.QSDateTime(Value));
+            Assert.Equal("'2026-11-27'", SqlProviders.PostgreSql.QSDate(Value));
+            Assert.Equal("'2026-11-27 14:05:06'", SqlProviders.PostgreSql.QSDateTime(Value));
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = PreviousCulture;
+        }
+    }
+
+    /// <summary>
+    /// The locked increment returns the original 64-bit value and participates in rollback.
+    /// </summary>
+    [Fact]
+    public void SelectIncrementLockedReturnsOriginalValueAndRollsBack()
+    {
+        DbConnectionInfo Info = new() { ConnectionString = "Data Source=:memory:" };
+        SqlStore Store = new(Info);
+        using (SqlTransactionContext Context = Store.BeginTransactionContext())
+        {
+            Store.ExecSql(Context.Transaction, "CREATE TABLE Counter (Id INTEGER PRIMARY KEY, NextNumber INTEGER NOT NULL)");
+            Store.ExecSql(Context.Transaction, "INSERT INTO Counter VALUES (1, 2147483648)");
+            Context.Commit();
+
+            using (DbTransaction Transaction = Context.Connection.BeginTransaction())
+            {
+                DataRow Original = SqlProviders.Sqlite.SelectIncrementLocked(Store, Transaction, "Counter", "Id", 1, "NextNumber");
+                Assert.Equal(2147483648L, Original.Field<long>("NextNumber"));
+                using (DataTable Updated = Store.Select(Transaction, "SELECT NextNumber FROM Counter"))
+                {
+                    Assert.Equal(2147483649L, Updated.Rows[0].Field<long>("NextNumber"));
+                }
+                Transaction.Rollback();
+            }
+
+            using (DbTransaction Transaction = Context.Connection.BeginTransaction())
+            using (DataTable RolledBack = Store.Select(Transaction, "SELECT NextNumber FROM Counter"))
+            {
+                Assert.Equal(2147483648L, RolledBack.Rows[0].Field<long>("NextNumber"));
+                Transaction.Commit();
+            }
+        }
+    }
+
+    /// <summary>
     /// SQLite applies the limit before a terminator and trailing comments.
     /// </summary>
     [Fact]

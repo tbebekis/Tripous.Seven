@@ -278,16 +278,19 @@ public class SqlStoreLoggingTests
             Db.Connections.Add(Info);
             SystemSchema.Register(ConnectionName).Execute();
             SqlStore Store = new(Info);
+            var Module = new CodeProviderCommitTests.NumberSeriesModule(ConnectionName);
             Assert.True(Store.TableExists("CUSTOM_SERIES"));
             Store.ExecSql("INSERT INTO CUSTOM_SERIES (Id, Code, Name, Pattern) VALUES ('1', 'ORDER', 'Orders', '{XXXX}')");
             using (SqlTransactionContext Context = Store.BeginTransactionContext())
             {
-                Assert.Equal("0001", new CodeProviderStore().GetNextCode(Store, Context.Transaction, "ORDER", new DateTime(2026, 1, 1)));
+                Assert.Equal("0001", Module.Reserve(Context.Transaction, "ORDER"));
                 Context.Commit();
             }
             DbConfig.SysNumberSeriesTableName = "INVALID;DROP";
             using (SqlTransactionContext Context = Store.BeginTransactionContext())
-                Assert.Throws<ArgumentException>(() => new CodeProviderStore().GetNextCode(Store, Context.Transaction, "ORDER", DateTime.UtcNow));
+            {
+                Assert.Throws<ArgumentException>(() => Module.Reserve(Context.Transaction, "ORDER"));
+            }
         }
         finally
         {

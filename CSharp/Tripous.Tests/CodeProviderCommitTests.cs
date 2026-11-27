@@ -14,6 +14,20 @@ namespace Tripous.Tests;
 [Collection("Database registry")]
 public class CodeProviderCommitTests
 {
+    // ● test module
+    sealed internal class NumberSeriesModule : DataModule
+    {
+        public NumberSeriesModule(string ConnectionName)
+        {
+            ModuleDef Definition = new() { Name = "NumberSeriesTest", ConnectionName = ConnectionName };
+            Definition.Table.Name = "Customer";
+            Definition.Table.Fields.Add(new FieldDef { Name = "Id" });
+            Initialize(Definition);
+        }
+        public string Reserve(DbTransaction Transaction, string Name)
+            => GetNextCodeLocked(Transaction, new CodeProviderDef { Name = Name });
+    }
+
     // ● public
     /// <summary>
     /// Sequence resets and updates remain inside the caller's transaction.
@@ -29,29 +43,34 @@ public class CodeProviderCommitTests
             Db.Connections.Add(Info);
             SystemSchema.Register(ConnectionName).Execute();
             SqlStore Store = new(Info);
-            Store.ExecSql("INSERT INTO SYS_NUMBER_SERIES (Id, Code, Name, Pattern, ResetPeriodId, NextNumber, LastResetValue) VALUES ('1', 'ORDERS', 'Orders', 'SO-{YYYY}-{MM}-{XXXX}', 4, 9, '2026-05')");
-            CodeProviderStore Provider = new();
+            var Module = new NumberSeriesModule(ConnectionName);
+            DateTime Today = DateTime.Today;
+            string Month = Today.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+            string PreviousMonth = Today.AddMonths(-1).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+            Store.ExecSql("INSERT INTO SYS_NUMBER_SERIES (Id, Code, Name, Pattern, ResetPeriodId, NextNumber, LastResetValue) VALUES ('1', 'ORDERS', 'Orders', 'SO-{YYYY}-{MM}-{XXXX}', 4, 9, :Month)",
+                new SqlParams().Add("Month", Month));
             using (SqlTransactionContext Transaction = Store.BeginTransactionContext())
             {
-                Assert.Equal("SO-2026-05-0009", Provider.GetNextCode(Store, Transaction.Transaction, "ORDERS", new DateTime(2026, 5, 31)));
+                Assert.Equal($"SO-{Month}-0009", Module.Reserve(Transaction.Transaction, "ORDERS"));
+                Store.ExecSql(Transaction.Transaction, "UPDATE SYS_NUMBER_SERIES SET LastResetValue = :Month", new SqlParams().Add("Month", PreviousMonth));
                 Transaction.Commit();
             }
             using (SqlTransactionContext Transaction = Store.BeginTransactionContext())
             {
-                Assert.Equal("SO-2026-06-0001", Provider.GetNextCode(Store, Transaction.Transaction, "ORDERS", new DateTime(2026, 6, 1)));
+                Assert.Equal($"SO-{Month}-0001", Module.Reserve(Transaction.Transaction, "ORDERS"));
                 Transaction.Rollback();
             }
             DataRow Row = Store.Select("SELECT NextNumber, LastResetValue FROM SYS_NUMBER_SERIES").Rows[0];
             Assert.Equal(10L, Convert.ToInt64(Row["NextNumber"]));
-            Assert.Equal("2026-05", Row["LastResetValue"]);
+            Assert.Equal(PreviousMonth, Row["LastResetValue"]);
             using (SqlTransactionContext Transaction = Store.BeginTransactionContext())
             {
-                Assert.Equal("SO-2026-06-0001", Provider.GetNextCode(Store, Transaction.Transaction, "ORDERS", new DateTime(2026, 6, 1)));
+                Assert.Equal($"SO-{Month}-0001", Module.Reserve(Transaction.Transaction, "ORDERS"));
                 Transaction.Commit();
             }
             Row = Store.Select("SELECT NextNumber, LastResetValue FROM SYS_NUMBER_SERIES").Rows[0];
             Assert.Equal(2L, Convert.ToInt64(Row["NextNumber"]));
-            Assert.Equal("2026-06", Row["LastResetValue"]);
+            Assert.Equal(Month, Row["LastResetValue"]);
         }
         finally
         {

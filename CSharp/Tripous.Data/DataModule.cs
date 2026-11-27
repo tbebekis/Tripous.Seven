@@ -108,14 +108,35 @@ public class DataModule
     /// Returning null skips code generation for this insert.
     /// </summary>
     protected virtual CodeProviderDef GetCodeProviderDef() => DataRegistry.CodeProviders.Get(ModuleDef.CodeProvider);
-
     /// <summary>
     /// Reserves and formats the next code for the selected provider inside the commit transaction.
     /// Override this to customize the generated code while keeping the standard assignment and rollback handling.
     /// </summary>
     protected virtual string GetNextCodeLocked(DbTransaction Transaction, CodeProviderDef Provider)
-        => new CodeProviderStore().GetNextCode(Store, Transaction, Provider.Name, DateTime.Today);
-
+    {
+        ArgumentNullException.ThrowIfNull(Transaction);
+        ArgumentNullException.ThrowIfNull(Provider);
+        string Name = Provider.Name;
+        ArgumentException.ThrowIfNullOrWhiteSpace(Name);
+        DateTime Date = DateTime.Today;
+        string TableName = DbConfig.SysNumberSeriesTableName;
+        SqlParams Key = new SqlParams().Add("Code", Name);
+        string SqlText = Store.Provider.SelectForUpdateSql(TableName, "Code");
+        DataRow Row = Store.SelectResults(Transaction, SqlText, Key)
+            ?? throw new InvalidOperationException($"Number series '{Name}' was not found.");
+        if (Convert.ToInt32(Row["IsActive"]) == 0)
+            throw new InvalidOperationException($"Number series '{Name}' is inactive.");
+        CodeProviderEntry Entry = new(Convert.ToString(Row["Pattern"]), (ResetPeriod)Convert.ToInt32(Row["ResetPeriodId"]));
+        string Marker = Entry.GetResetValue(Date);
+        string PreviousMarker = Row.IsNull("LastResetValue") ? null : Convert.ToString(Row["LastResetValue"]);
+        int Number = !string.IsNullOrEmpty(Marker) && !string.Equals(Marker, PreviousMarker, StringComparison.OrdinalIgnoreCase)
+            ? 1 : Convert.ToInt32(Row["NextNumber"]);
+        string Result = Entry.Format(Date, Number);
+        int NextNumber = checked(Number + 1);
+        SqlParams Params = new SqlParams().Add("Code", Name).Add("NextNumber", NextNumber).Add("LastResetValue", string.IsNullOrEmpty(Marker) ? PreviousMarker : Marker);
+        Store.ExecSql(Transaction, $"UPDATE {TableName} SET NextNumber = :NextNumber, LastResetValue = :LastResetValue WHERE Code = :Code", Params);
+        return Result;
+    }
     /// <summary>
     /// Assigns a registered code provider's value to a new item with an empty code field.
     /// The series update uses the commit transaction.

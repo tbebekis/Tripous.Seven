@@ -6,6 +6,8 @@
  * See LICENSE for details.
  */
 
+using System.Globalization;
+
 namespace Tripous.Data;
 
 /// <summary>
@@ -41,6 +43,10 @@ public class SqlStore
     /// </summary>
     internal DbSchema Schema => fConnectionInfo.Schema;
     /// <summary>
+    /// Gets the provider selected when the store was created.
+    /// </summary>
+    internal SqlProvider Provider => fProvider;
+    /// <summary>
     /// Gets the identifier generation mode selected by the store's provider.
     /// </summary>
     internal OidMode OidMode => fProvider.OidMode;
@@ -48,7 +54,6 @@ public class SqlStore
     /// Applies the provider-specific row limit to a list SELECT.
     /// </summary>
     internal string ApplyRowLimit(string SqlText, int RowLimit) => fProvider.ApplyRowLimit(SqlText, RowLimit);
-
     /// <summary>
     /// Maps a native column declaration to the provider's default field type.
     /// </summary>
@@ -187,7 +192,6 @@ public class SqlStore
     /// </summary>
     public SqlTransactionContext BeginTransactionContext()
         => fProvider.BeginTransactionContext(fConnectionInfo);
-
     /// <summary>
     /// Reads the current time from the database and returns it in UTC.
     /// Providers that return a timestamp without an offset must supply a UTC value.
@@ -212,7 +216,6 @@ public class SqlStore
         }
 
     }
-
     /// <summary>
     /// Reads the result column metadata of a SELECT without loading its rows.
     /// </summary>
@@ -295,7 +298,6 @@ public class SqlStore
     /// Loads an existing table with the results of a SELECT.
     /// </summary>
     public int SelectTo(DbTransaction Transaction, DataTable Table, string SqlText, int CommandTimeout, DataRow Params) => SelectTo(Transaction, Table, SqlText, CommandTimeout, CreateParams(Params));
-
     /// <summary>
     /// Executes a SELECT inside a supplied transaction and returns a new table.
     /// </summary>
@@ -333,7 +335,6 @@ public class SqlStore
     /// Executes a SELECT inside a supplied transaction and returns a new table.
     /// </summary>
     public DataTable Select(DbTransaction Transaction, string SqlText, int CommandTimeout, DataRow Params) => Select(Transaction, SqlText, CommandTimeout, CreateParams(Params));
-
     /// <summary>
     /// Loads an existing table with the results of a SELECT.
     /// </summary>
@@ -374,7 +375,6 @@ public class SqlStore
     /// Loads an existing table with the results of a SELECT.
     /// </summary>
     public int SelectTo(DataTable Table, string SqlText, int CommandTimeout, DataRow Params) => SelectTo(Table, SqlText, CommandTimeout, CreateParams(Params));
-
     /// <summary>
     /// Executes a SELECT with its own transaction and returns a new table.
     /// </summary>
@@ -413,6 +413,98 @@ public class SqlStore
     /// </summary>
     public DataTable Select(string SqlText, int CommandTimeout, DataRow Params) => Select(SqlText, CommandTimeout, CreateParams(Params));
 
+    // ● result helpers
+    /// <summary>
+    /// Returns the first row of a SELECT, or null if it returns no rows.
+    /// </summary>
+    public DataRow SelectResults(string SqlText, SqlParams Params = null)
+    {
+        using (SqlTransactionContext Context = BeginTransactionContext())
+        {
+            DataRow Result = SelectResults(Context.Transaction, SqlText, Params);
+            Context.Commit();
+            return Result;
+        }
+    }
+    /// <summary>
+    /// Returns the first row of a SELECT in the supplied transaction, or null if it returns no rows.
+    /// </summary>
+    public DataRow SelectResults(DbTransaction Transaction, string SqlText, SqlParams Params = null)
+    {
+        using (DataTable Table = Select(Transaction, SqlText, Params ?? new SqlParams()))
+        {
+            return Table.Rows.Count > 0 ? Table.Rows[0] : null;
+        }
+    }
+    /// <summary>
+    /// Returns the first column of the first row, or DBNull.Value when the result is absent or SQL NULL.
+    /// </summary>
+    public object SelectResult(string SqlText) => SelectResult(SqlText, DBNull.Value);
+    /// <summary>
+    /// Returns the first column of the first row, or the supplied default when the result is absent or SQL NULL.
+    /// </summary>
+    public object SelectResult(string SqlText, object Default, SqlParams Params = null)
+    {
+        using (SqlTransactionContext Context = BeginTransactionContext())
+        {
+            object Result = SelectResult(Context.Transaction, SqlText, Default, Params);
+            Context.Commit();
+            return Result;
+        }
+    }
+    /// <summary>
+    /// Reads the first column of the first row in the caller's transaction.
+    /// Returns the supplied default when the result is absent or SQL NULL.
+    /// </summary>
+    public object SelectResult(DbTransaction Transaction, string SqlText, object Default, SqlParams Params = null)
+    {
+        object Result = ExecuteScalar(Transaction, SqlText, Params ?? new SqlParams());
+        return Result is null or DBNull ? Default : Result;
+    }
+    /// <summary>
+    /// Reads a 32-bit integer from the first column of the first row, for example a SELECT COUNT query.
+    /// Returns the supplied default if the result cannot be read as a 32-bit integer.
+    /// </summary>
+    public int IntegerResult(string SqlText, int Default, SqlParams Params = null)
+    {
+        using (SqlTransactionContext Context = BeginTransactionContext())
+        {
+            int Result = IntegerResult(Context.Transaction, SqlText, Default, Params);
+            Context.Commit();
+            return Result;
+        }
+    }
+    /// <summary>
+    /// Reads a 32-bit integer in the caller's transaction, or returns the supplied default.
+    /// </summary>
+    public int IntegerResult(DbTransaction Transaction, string SqlText, int Default, SqlParams Params = null)
+    {
+        long Result = Int64Result(Transaction, SqlText, Default, Params);
+        return Result is >= int.MinValue and <= int.MaxValue ? (int)Result : Default;
+    }
+    /// <summary>
+    /// Reads a 64-bit integer from the first column of the first row, or returns the supplied default.
+    /// </summary>
+    public long Int64Result(string SqlText, long Default, SqlParams Params = null)
+    {
+        using (SqlTransactionContext Context = BeginTransactionContext())
+        {
+            long Result = Int64Result(Context.Transaction, SqlText, Default, Params);
+            Context.Commit();
+            return Result;
+        }
+    }
+    /// <summary>
+    /// Reads a 64-bit integer in the caller's transaction, or returns the supplied default.
+    /// </summary>
+    public long Int64Result(DbTransaction Transaction, string SqlText, long Default, SqlParams Params = null)
+    {
+        object Value = SelectResult(Transaction, SqlText, null, Params);
+        string Text = Convert.ToString(Value, CultureInfo.InvariantCulture);
+        return long.TryParse(Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long Result) ? Result : Default;
+    }
+
+    // ● SQL execution
     /// <summary>
     /// Executes a SQL statement and returns the affected row count.
     /// </summary>
@@ -463,7 +555,6 @@ public class SqlStore
     /// Executes a SQL statement and returns the affected row count.
     /// </summary>
     public int ExecSql(DbTransaction Transaction, string SqlText, int CommandTimeout, DataRow Params) => ExecSql(Transaction, SqlText, CommandTimeout, CreateParams(Params));
-
     /// <summary>
     /// Executes a SQL statement and returns the affected row count.
     /// </summary>
@@ -504,6 +595,32 @@ public class SqlStore
     /// Executes a SQL statement and returns the affected row count.
     /// </summary>
     public int ExecSql(string SqlText, int CommandTimeout, DataRow Params) => ExecSql(SqlText, CommandTimeout, CreateParams(Params));
+    /// <summary>
+    /// Executes a list of SQL statements in order inside a single transaction.
+    /// </summary>
+    public void ExecSql(IEnumerable<string> SqlTextList)
+    {
+        ArgumentNullException.ThrowIfNull(SqlTextList);
+        ExecSql(Transaction =>
+        {
+            foreach (string SqlText in SqlTextList)
+                ExecSql(Transaction, SqlText);
+        });
+    }
+    /// <summary>
+    /// Runs multiple SQL operations inside a single transaction using a callback.
+    /// Pass the supplied transaction to each operation. The store commits when the callback
+    /// returns and attempts to roll back if the callback throws.
+    /// </summary>
+    public void ExecSql(Action<DbTransaction> Action)
+    {
+        ArgumentNullException.ThrowIfNull(Action);
+        using (SqlTransactionContext Context = BeginTransactionContext())
+        {
+            Action(Context.Transaction);
+            Context.Commit();
+        }
+    }
 
     // ● id generation
     /// <summary>

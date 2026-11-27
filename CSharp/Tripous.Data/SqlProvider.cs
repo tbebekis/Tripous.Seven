@@ -6,6 +6,8 @@
  * See LICENSE for details.
  */
 
+using System.Globalization;
+
 namespace Tripous.Data;
 
 /// <summary>
@@ -194,6 +196,23 @@ public abstract class SqlProvider
         => throw new NotSupportedException("This provider does not build connection strings.");
 
     /// <summary>
+    /// Creates a provider-specific builder from the supplied connection string.
+    /// </summary>
+    public virtual DbConnectionStringBuilder CreateConnectionStringBuilder(string ConnectionString)
+    {
+        DbConnectionStringBuilder Builder = Factory.CreateConnectionStringBuilder()
+            ?? throw new NotSupportedException("This provider does not supply a connection string builder.");
+        Builder.ConnectionString = ConnectionString;
+        return Builder;
+    }
+
+    /// <summary>
+    /// Gets the database name declared in a connection string without opening a connection.
+    /// Returns an empty string when no database name is specified.
+    /// </summary>
+    public virtual string GetDatabaseName(string ConnectionString) => string.Empty;
+
+    /// <summary>
     /// Resolves provider-specific settings before using a connection string.
     /// </summary>
     public virtual string NormalizeConnectionString(string ConnectionString) => ConnectionString;
@@ -242,6 +261,59 @@ public abstract class SqlProvider
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(Name);
         return ObjectStartDelimiter + Name.Replace(ObjectEndDelimiter, ObjectEndDelimiter + ObjectEndDelimiter) + ObjectEndDelimiter;
+    }
+
+    /// <summary>
+    /// Quotes and formats a date value for use in a SQL statement.
+    /// </summary>
+    public virtual string QSDate(DateTime Value)
+        => "'" + Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "'";
+
+    /// <summary>
+    /// Quotes and formats a date and time value for use in a SQL statement.
+    /// Uses whole seconds and preserves the supplied clock time.
+    /// </summary>
+    public virtual string QSDateTime(DateTime Value)
+        => "'" + Value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "'";
+
+    // ● locking
+    /// <summary>
+    /// Returns a SELECT statement for reading an existing row by a unique key
+    /// and locking it for update within the caller's transaction.
+    /// The key value is bound to a parameter named after the key field.
+    /// </summary>
+    public virtual string SelectForUpdateSql(string TableName, string FieldName)
+        => throw new NotSupportedException("This provider does not support selecting a row for update.");
+
+    /// <summary>
+    /// Selects a row with an update lock, increments a non-null integer field,
+    /// and returns the row as it was before the increment.
+    /// The key field must be unique, and the caller owns the supplied transaction.
+    /// </summary>
+    public virtual DataRow SelectIncrementLocked(SqlStore Store, DbTransaction Transaction, string TableName, string KeyFieldName, object KeyValue, string ValueFieldName)
+    {
+        ArgumentNullException.ThrowIfNull(Store);
+        ArgumentNullException.ThrowIfNull(Transaction);
+        ArgumentNullException.ThrowIfNull(KeyValue);
+        DataTableDef.ValidateIdentifier(TableName);
+        DataTableDef.ValidateIdentifier(KeyFieldName);
+        DataTableDef.ValidateIdentifier(ValueFieldName);
+        SqlParams Params = new SqlParams().Add(KeyFieldName, KeyValue);
+
+        using (DataTable Rows = Store.Select(Transaction, SelectForUpdateSql(TableName, KeyFieldName), Params))
+        {
+            if (Rows.Rows.Count != 1)
+                throw new InvalidOperationException($"Expected one row in '{TableName}' for key field '{KeyFieldName}'.");
+            DataRow Result = Rows.Rows[0];
+            if (Result.IsNull(ValueFieldName))
+                throw new InvalidOperationException($"Cannot increment NULL in '{TableName}.{ValueFieldName}'.");
+
+            string SqlText = $"UPDATE {TableName} SET {ValueFieldName} = {ValueFieldName} + 1 WHERE {KeyFieldName} = {GlobalPrefix}{KeyFieldName}";
+            if (Store.ExecSql(Transaction, SqlText, Params) != 1)
+                throw new InvalidOperationException($"Expected to increment one row in '{TableName}'.");
+
+            return Result;
+        }
     }
 
     /// <summary>

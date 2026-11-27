@@ -27,6 +27,20 @@ static internal class SchemaExecutor
     /// Creates tables and views, then runs subsequent structural statements.
     /// The callback runs in the second transaction before it is committed.
     /// </summary>
+    /// <remarks>
+    /// The two phases commit separately. If the second phase fails, changes committed in
+    /// the first phase remain even though the schema version may not have been recorded.
+    /// Some database engines also commit DDL implicitly, so changes from a failed phase
+    /// may have persisted.
+    /// <para>
+    /// Rehearse upgrades, partial failures and recovery in staging with representative data
+    /// and the same database engine and version as production. Before retrying a failed
+    /// upgrade, inspect the actual schema and version record. A retry skips existing tables
+    /// and views by name without comparing their definitions, and runs the before and after
+    /// statements again. Make those statements safe to rerun where practical, or prepare
+    /// explicit recovery steps for changes that can only be applied once.
+    /// </para>
+    /// </remarks>
     static internal void Execute(SchemaVersion Version, DbConnectionInfo ConnectionInfo, string Domain, Action<DbTransaction> AfterExecute)
     {
         ArgumentNullException.ThrowIfNull(Version);

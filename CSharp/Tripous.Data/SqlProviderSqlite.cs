@@ -39,6 +39,18 @@ public class SqlProviderSqlite : SqlProvider
         };
     }
 
+    // ● locking
+    /// <summary>
+    /// Returns a SELECT statement for reading a row in the caller's write transaction.
+    /// SQLite serializes writers at the database level.
+    /// </summary>
+    public override string SelectForUpdateSql(string TableName, string FieldName)
+    {
+        DataTableDef.ValidateIdentifier(TableName);
+        DataTableDef.ValidateIdentifier(FieldName);
+        return $"SELECT * FROM {TableName} WHERE {FieldName} = {GlobalPrefix}{FieldName}";
+    }
+
     // ● constructor
     internal SqlProviderSqlite()
     {
@@ -98,6 +110,16 @@ public class SqlProviderSqlite : SqlProvider
             Builder.DataSource = Path.GetFullPath(FilePath);
         }
         return Builder.ConnectionString;
+    }
+
+    /// <summary>
+    /// Gets the SQLite data source declared in the connection string.
+    /// Path placeholders are preserved.
+    /// </summary>
+    public override string GetDatabaseName(string ConnectionString)
+    {
+        string DataSource = ((SqliteConnectionStringBuilder)CreateConnectionStringBuilder(ConnectionString)).DataSource;
+        return string.IsNullOrWhiteSpace(DataSource) ? string.Empty : DataSource;
     }
 
     /// <summary>

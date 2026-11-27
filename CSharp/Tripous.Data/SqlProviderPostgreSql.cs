@@ -44,7 +44,28 @@ public class SqlProviderPostgreSql : SqlProvider
             _ => throw new NotSupportedException($"Column '{Column.Name}' uses PostgreSQL type '{Column.DataType}', which has no inferred field type."),
         };
 
+    // ● locking
+    /// <summary>
+    /// Returns a SELECT statement that locks an existing row for update
+    /// within the caller's transaction.
+    /// </summary>
+    public override string SelectForUpdateSql(string TableName, string FieldName)
+    {
+        DataTableDef.ValidateIdentifier(TableName);
+        DataTableDef.ValidateIdentifier(FieldName);
+        return $"SELECT * FROM {TableName} WHERE {FieldName} = {GlobalPrefix}{FieldName} FOR UPDATE";
+    }
+
     // ● connection
+    /// <summary>
+    /// Gets the PostgreSQL database name declared in the connection string.
+    /// </summary>
+    public override string GetDatabaseName(string ConnectionString)
+    {
+        string Database = ((NpgsqlConnectionStringBuilder)CreateConnectionStringBuilder(ConnectionString)).Database;
+        return string.IsNullOrWhiteSpace(Database) ? string.Empty : Database;
+    }
+
     /// <summary>
     /// Builds a PostgreSQL connection string with the supplied connection settings.
     /// </summary>

@@ -15,6 +15,58 @@ public class SqlStoreTests
 {
     // ● public
     /// <summary>
+    /// SQL lists commit together and callback failures roll back earlier statements.
+    /// </summary>
+    [Fact]
+    public void ExecSqlListAndCallbackShareOneTransaction()
+    {
+        string FilePath = Path.Combine(Path.GetTempPath(), $"tripous-{Guid.NewGuid():N}.db");
+        try
+        {
+            SqlStore Store = new(new DbConnectionInfo { ConnectionString = $"Data Source={FilePath};Pooling=False" });
+            Store.ExecSql(new[] { "CREATE TABLE Counter (Id INTEGER PRIMARY KEY)", "INSERT INTO Counter VALUES (1)" });
+            Assert.Throws<SqliteException>(() => Store.ExecSql(new[] { "INSERT INTO Counter VALUES (2)", "INSERT INTO Counter VALUES (1)" }));
+            Assert.Equal(1, Store.IntegerResult("SELECT COUNT(*) FROM Counter", -1));
+
+            InvalidOperationException Failure = new("Callback failed.");
+            Assert.Same(Failure, Assert.Throws<InvalidOperationException>(() => Store.ExecSql(Transaction =>
+            {
+                Store.ExecSql(Transaction, "INSERT INTO Counter VALUES (2)");
+                Assert.Equal(2, Store.IntegerResult(Transaction, "SELECT COUNT(*) FROM Counter", -1));
+                throw Failure;
+            })));
+            Assert.Equal(1, Store.IntegerResult("SELECT COUNT(*) FROM Counter", -1));
+        }
+        finally
+        {
+            File.Delete(FilePath);
+        }
+    }
+
+    /// <summary>
+    /// Result helpers distinguish empty rows, SQL NULLs and integers outside the Int32 range.
+    /// </summary>
+    [Fact]
+    public void ResultHelpersReturnFirstResultOrDefault()
+    {
+        SqlStore Store = new(new DbConnectionInfo { ConnectionString = "Data Source=:memory:" });
+        Assert.Null(Store.SelectResults("SELECT 42 WHERE 1 = 0"));
+        Assert.Same(DBNull.Value, Store.SelectResult("SELECT NULL"));
+        Assert.Equal(7, Store.SelectResult("SELECT 42 WHERE 1 = 0", 7));
+        Assert.Equal(7, Store.IntegerResult("SELECT 2147483648", 7));
+        Assert.Equal(2147483648L, Store.Int64Result("SELECT 2147483648", 7));
+
+        using (SqlTransactionContext Context = Store.BeginTransactionContext())
+        {
+            SqlParams Params = new SqlParams().Add("Value", 42);
+            DataRow Row = Store.SelectResults(Context.Transaction, "SELECT :Value AS Result UNION ALL SELECT 43", Params);
+            Assert.Equal(42L, Row["Result"]);
+            Assert.Equal(42, Store.IntegerResult(Context.Transaction, "SELECT :Value", 7, Params));
+            Context.Rollback();
+        }
+    }
+
+    /// <summary>
     /// The store uses the supplied settings and supports named parameter inputs.
     /// </summary>
     [Fact]
