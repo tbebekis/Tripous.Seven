@@ -10,6 +10,7 @@ global using System.Data;
 global using System.Data.Common;
 global using System.Text;
 global using Microsoft.Data.Sqlite;
+global using Microsoft.Data.SqlClient;
 global using MySql.Data.MySqlClient;
 global using Npgsql;
 global using System.Collections;

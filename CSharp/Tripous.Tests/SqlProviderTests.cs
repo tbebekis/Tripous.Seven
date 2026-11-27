@@ -48,6 +48,26 @@ public class SqlProviderTests
 
     // ● public
     /// <summary>
+    /// SQL Server caps the complete query and preserves outer ordering and nested limits.
+    /// </summary>
+    [Fact]
+    public void MsSqlRowLimitHandlesSelectAndCompoundResults()
+    {
+        SqlProvider Provider = SqlProviders.MsSql;
+        Assert.Equal("SELECT /* outer /* inner */ comment */ DISTINCT TOP (2) [Order] FROM Items; -- list",
+            Provider.ApplyRowLimit("SELECT /* outer /* inner */ comment */ DISTINCT [Order] FROM Items; -- list", 2));
+        Assert.Equal("SELECT ALL TOP (2) Id FROM Items", Provider.ApplyRowLimit("SELECT ALL Id FROM Items", 2));
+
+        const string Cte = "WITH Sample AS (SELECT TOP (5) Id FROM Items) ";
+        const string Compound = "SELECT Id FROM Sample UNION ALL SELECT Id FROM Other";
+        Assert.Equal(Cte + "SELECT TOP (2) * FROM (" + Compound + ") AS TripousList; -- list",
+            Provider.ApplyRowLimit(Cte + Compound + "; -- list", 2));
+        Assert.Equal(Cte + Compound + " ORDER BY Id OFFSET 0 ROWS FETCH NEXT 2 ROWS ONLY OPTION (RECOMPILE); -- list",
+            Provider.ApplyRowLimit(Cte + Compound + " ORDER BY Id OPTION (RECOMPILE); -- list", 2));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("SELECT DISTINCT TOP (3) Id FROM Items", 2));
+        Assert.Throws<InvalidOperationException>(() => Provider.ApplyRowLimit("SELECT Id FROM Items ORDER BY Id OFFSET 1 ROWS", 2));
+    }
+    /// <summary>
     /// MySQL adds the outer limit around dialect-specific quotes and comments.
     /// </summary>
     [Fact]
