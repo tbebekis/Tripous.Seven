@@ -4,4 +4,38 @@
   <Project Path="Tripous.Data/Tripous.Data.csproj" />
   <Project Path="Tripous.Logging/Tripous.Logging.csproj" />
   <Project Path="Tripous.RemoteOps/Tripous.RemoteOps.csproj" />
+  <Folder Name="/Tripous.Avalon.Controls/">
+    <Project Path="Tripous.Avalon.Controls/Tripous.Avalon.Controls/Tripous.Avalon.Controls.csproj" />
+    <File Path="Tripous.Avalon.Controls/ReadMe.md" />
+    <File Path="Tripous.Avalon.Controls/LICENSE" />
+  </Folder>
+  <Folder Name="/Tripous.Avalon.Controls/Demos/">
+    <Project Path="Tripous.Avalon.Controls/Demos/Charts-Demo-00/Charts-Demo-00.csproj" />
+    <Project Path="Tripous.Avalon.Controls/Demos/GroupGrid-Demo-00/GroupGrid-Demo-00.csproj" />
+    <Project Path="Tripous.Avalon.Controls/Demos/PivotGrid-Demo-00/PivotGrid-Demo-00.csproj" />
+  </Folder>
+  <Folder Name="/Tripous.Avalon.Controls/Tests/">
+    <Project Path="Tripous.Avalon.Controls/Tests/Charts-Tests/Charts-Tests.csproj" />
+    <Project Path="Tripous.Avalon.Controls/Tests/GroupGrid-Tests/GroupGrid-Tests.csproj" />
+    <Project Path="Tripous.Avalon.Controls/Tests/PivotGrid-Tests/PivotGrid-Tests.csproj" />
+  </Folder>
+  <Folder Name="/Tripous.Avalon.Controls/Docs/">
+    <File Path="Tripous.Avalon.Controls/Docs/ChartControl-Concepts.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/ChartControl-Design.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/GroupGrid-Concepts.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/GroupGrid-Design.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/PivotGrid-Concepts.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/PivotGrid-Design.md" />
+  </Folder>
+  <Folder Name="/Tripous.Avalon.Controls/Docs/Articles/">
+    <File Path="Tripous.Avalon.Controls/Docs/Articles/1.Designing-a-Business-Grid-el.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/Articles/1.Designing-a-Business-Grid.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/Articles/2.Building-a-Business-Grid-runtime-el.md" />
+    <File Path="Tripous.Avalon.Controls/Docs/Articles/2.Building-a-Business-Grid-runtime.md" />
+  </Folder>
+  <Folder Name="/Tripous.Avalon.Controls/Docs/Images/">
+    <File Path="Tripous.Avalon.Controls/Docs/Images/ChartControl.png" />
+    <File Path="Tripous.Avalon.Controls/Docs/Images/GroupGrid.png" />
+    <File Path="Tripous.Avalon.Controls/Docs/Images/PivotGrid.png" />
+  </Folder>
 </Solution>
